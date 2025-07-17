@@ -1,0 +1,15 @@
+backend/uploads
+__pycache__
+check
+output
+sample_images
+_annotations.coco_merged.json
+100T_plan_page-0001_jpg.rf.00bb5b9ab04fe4cb8bd407177f69f0f8_x0_y490.json
+analyze.py
+demo3.png
+final_pred.json
+group_boxes_4_101.json
+
+
+
+
