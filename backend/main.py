@@ -1,11 +1,15 @@
 import json
+import logging
 import os
 import uuid
-from chunking import generate_results
 from typing import List
 
+from chunking import generate_results
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -14,28 +18,38 @@ app = FastAPI()
 async def upload_and_process(
     files: List[UploadFile] = File(...), config: str = Form(...)
 ):
-    session_id = str(uuid.uuid4())
-    save_dir = os.path.join("./uploads", session_id)
-    os.makedirs(save_dir, exist_ok=True)
+    try:
+        # Session Id to generate a unique directory for each upload.
+        session_id = str(uuid.uuid4())
+        uploads_dir = os.path.join("./uploads", session_id)
+        os.makedirs(uploads_dir, exist_ok=True)
 
-    # Save images
-    image_dir = os.path.join(save_dir, "images")
-    os.makedirs(image_dir, exist_ok=True)
-    for file in files:
-        img_path = os.path.join(image_dir, file.filename)
-        with open(img_path, "wb") as f:
-            f.write(await file.read())
+        # Save images sent by the user.
+        image_dir = os.path.join(uploads_dir, "images")
+        os.makedirs(image_dir, exist_ok=True)
+        for file in files:
+            if file.filename:
+                file_name: str = file.filename
+            else:
+                raise ValueError("Invlaid file name.")
 
-    # Save config
-    config_data = json.loads(config)
-    config_path = os.path.join(save_dir, "config.json")
-    with open(config_path, "w") as f:
-        json.dump(config_data, f, indent=2)
+            img_path: str = os.path.join(image_dir, file_name)
+            with open(img_path, "wb") as f:
+                f.write(await file.read())
 
-    # Generate results
-    results = generate_results(save_dir, config_data)
-    results_path = os.path.join(save_dir, "results.json")
-    with open(results_path, "w") as f:
-        json.dump(results, f, indent=2)
+        # Save configurations sent by the user.
+        config_data = json.loads(config)
+        config_path = os.path.join(uploads_dir, "config.json")
+        with open(config_path, "w") as f:
+            json.dump(config_data, f, indent=2)
 
-    return JSONResponse({"results_path": results_path})
+        # Generate results
+        results = generate_results(uploads_dir, config_data)
+        results_path = os.path.join(uploads_dir, "results.json")
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2)
+
+        return JSONResponse({"results_path": results_path})
+    except Exception as e:
+        logger.error("Error processinf files: %s", str(e))
+        return JSONResponse(status_code=500, content="Internal Server Error")

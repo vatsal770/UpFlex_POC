@@ -1,98 +1,89 @@
-import os
 import json
-import cv2
-
+import os
 from pathlib import Path
+
+from typing import List
+
+import cv2
 import supervision as sv
 from inference import get_model
 
 
+def run_model_predictions_on_chunks(image_dir: str) -> List[str]:
 
-def run_model_predictions_on_chunks(chunking_strategies):
-    """
-    For each chunking strategy and overlap, run model inference on all chunk images and save results in the same directory.
-    Returns a dict with counts of chunk images per combination.
-    """
+    # Initialize the prediction model
     model = get_model(model_id="floorplan-o9hev/6", api_key="LLDV1nzXicfTYmlj9CMp")
+    image_name = os.path.basename(image_dir)
+    pred_dir_list = [] 
 
-    chunk_counts = {}
-    for strategy, strategy_dict in chunking_strategies.items():
-        for chunk_pct, overlap_dict in strategy_dict.items():
-            for overlap_key, combo in overlap_dict.items():
-                print(combo)
-                chunk_dir = (
-                    os.path.dirname(combo["predictions"][0])
-                    if combo["predictions"]
-                    else None
-                )
-                if not chunk_dir or not os.path.isdir(chunk_dir):
-                    continue
+    for image_file in os.listdir(image_dir):
+        if not image_file.lower().endswith((".jpg", ".jpeg", ".png")):
+            continue
 
-                chunk_files = [
-                    f
-                    for f in os.listdir(chunk_dir)
-                    if f.endswith(".jpg") or f.endswith(".png")
-                ]
-                
-                allowed_classes = ["table", "chair", "table-chair"]
-                chunk_counts[(strategy, chunk_pct, overlap_key)] = len(chunk_files)
+        image_path = os.path.join(image_dir, image_file)
+        if not os.path.isfile(image_path):
+            continue
 
-                # Create corresponding output directory
-                rel_path = os.path.relpath(chunk_dir, start="chunks")  # remove chunks/ prefix
-                annotated_chunk_dir = os.path.join("annotated_chunks", rel_path)
-                os.makedirs(annotated_chunk_dir, exist_ok=True)
+        # Load the image
+        image = cv2.imread(image_path)
+        if image is None:
+            continue
 
-                for chunk_file in chunk_files:
-                    chunk_path = os.path.join(chunk_dir, chunk_file)
-                    image = cv2.imread(chunk_path)
-                    results = model.infer(image)[0]
-                    detections = sv.Detections.from_inference(results)
+        # Run inference on the image
+        results = model.infer(image)[0]
+        detections = sv.Detections.from_inference(results)
 
-                    # Save annotated image
-                    bounding_box_annotator = sv.BoxAnnotator()
-                    label_annotator = sv.LabelAnnotator()
+        bounding_box_annotator = sv.BoxAnnotator()
+        label_annotator = sv.LabelAnnotator()
 
-                    annotated_image = bounding_box_annotator.annotate(
-                        scene=image, detections=detections
-                    )
-                    annotated_image = label_annotator.annotate(
-                        scene=annotated_image, detections=detections
-                    )
+        annotated_image = bounding_box_annotator.annotate(
+            scene=image, detections=detections
+        )
+        annotated_image = label_annotator.annotate(
+            scene=annotated_image, detections=detections
+        )
 
-                    annotated_path = os.path.join(annotated_chunk_dir, f"annotated_{chunk_file}")
-                    cv2.imwrite(annotated_path, annotated_image)
+        # Save predictions as JSON
+        annotations = []
+        for i in range(len(detections.xyxy)):
+            x_min, y_min, x_max, y_max = detections.xyxy[i]
+            width = x_max - x_min
+            height = y_max - y_min
+            class_id = detections.class_id[i]
+            confidence = float(detections.confidence[i])
+            label = (
+                detections.data["class_name"][i]
+                if "class_name" in detections.data
+                else str(class_id)
+            )
+            allowed_classes = ["table", "chair", "table-chair"]
 
-                    # Save predictions as JSON
-                    annotations = []
-                    for i in range(len(detections.xyxy)):
-                        x_min, y_min, x_max, y_max = detections.xyxy[i]
-                        class_id = detections.class_id[i]
-                        confidence = float(detections.confidence[i])
-                        label = (
-                            detections.data["class_name"][i] if "class_name" in detections.data else str(class_id)
-                        )
-                        # to eliminate extra labels
-                        if label not in allowed_classes:
-                            continue
+            if label not in allowed_classes:
+                continue
 
-                        annotation = {
-                            "bbox": [
-                                float(x_min),
-                                float(y_min),
-                                float(x_max),
-                                float(y_max),
-                            ],
-                            "label": label,
-                            "confidence": confidence
-                        }
-                        annotations.append(annotation)
+            annotation = {
+                "bbox": [
+                    float(x_min),
+                    float(y_min),
+                    float(width),
+                    float(height),
+                ],
+                "label": label,
+                "confidence": confidence,
+            }
+            annotations.append(annotation)
 
-                    output_json_path = os.path.join(
-                        chunk_dir, f"{Path(chunk_file).stem}.json"
-                    )
-                    with open(output_json_path, "w") as f:
-                        json.dump(
-                            {"image": chunk_path, "annotations": annotations},f,indent=4
-                        )
-    return chunk_counts
+        annotation_json_dir=os.path.join(image_dir, "annotations_json")
+        os.makedirs(annotation_json_dir, exist_ok=True)
+        output_json_path = os.path.join(annotation_json_dir, f"{Path(image_file).stem}.json")
+        with open(output_json_path, "w") as f:
+            json.dump({"image": image_path, "annotations": annotations}, f, indent=4)
+
+        annotation_img_dir=os.path.join(image_dir, "annotations_img")
+        os.makedirs(annotation_img_dir, exist_ok=True)
+        output_img_path = os.path.join(annotation_img_dir, f"annotated_{Path(image_file).name}")
+        cv2.imwrite(output_img_path, annotated_image)
         
+        pred_dir_list.append(output_json_path)
+    
+    return pred_dir_list

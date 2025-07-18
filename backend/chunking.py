@@ -1,105 +1,150 @@
-import os
-import cv2
 import json
-
-from typing import Any, Dict
 import logging
+import math
+import os
+from typing import Any, Dict, List
 
-from model_predictions import run_model_predictions_on_chunks
+import cv2
 from Custom import stitch_chunks_custom
+from model_predictions import run_model_predictions_on_chunks
 from NMS import stitch_chunks_nms
 
-logging.basicConfig(
-    level = logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
 
-def generate_results(session_dir: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
-    image_dir = os.path.join(session_dir, "images")
-    chunk_base_dir = os.path.join(session_dir, "chunks")
+def chunk_fixed_ovp_pct(
+    chunk_base_dir: str,
+    chunk_width: int,
+    chunk_height: int,
+    overlap_type: str,
+    basename: str,
+    start_overlap: int,
+    end_overlap: int,
+    img_w: int,
+    img_h: int,
+    image: cv2.typing.MatLike,
+):
+    for overlap_pct in range(start_overlap, end_overlap + 1, 5):
+        stride_w = max(1, int(chunk_width * (1 - overlap_pct / 100)))
+        stride_h = max(1, int(chunk_height * (1 - overlap_pct / 100)))
+        chunk_dir = os.path.join(basename)
+        os.makedirs(chunk_dir, exist_ok=True)
 
-    results = {}
+        chunked_images: List[str] = []
+        chunk_id = 0
+        for y in range(0, img_h, stride_h):
+            chunk_end_y = min(img_h, y + chunk_height)
+            start_y = max(0, chunk_end_y - chunk_height)
+            for x in range(0, img_w, stride_w):
+                chunk_end_x = min(img_w, x + chunk_width)
+                start_x = max(0, chunk_end_x - chunk_width)
+                chunk = image[
+                    int(start_y) : int(chunk_end_y), int(start_x) : int(chunk_end_x)
+                ]
+                chunk_filename = os.path.join(
+                    chunk_dir, f"chunk_{start_x}_{start_y}.jpg"
+                )
+                cv2.imwrite(chunk_filename, chunk)
+                chunked_images.append(chunk_filename)
+                chunk_id += 1
 
-    chunking_type = config_data.get("chunking_type", "")
-    overlap_type = config_data.get("overlap_type", "")
 
-    # Overlap and chunking config
-    start_overlap = config_data.get(
-        "start_overlap", config_data.get("overlap_percent", 10)
+def chunk_fixed_ovp_data_px(
+    chunk_base_dir: str,
+    chunk_width: int,
+    chunk_height: int,
+    img_w: int,
+    img_h: int,
+    basename: str,
+    overlap_px: int,
+    image: cv2.typing.MatLike,
+):
+    logger.info(
+        f"Chunking with fixed size {chunk_width}x{chunk_height} and overlap {overlap_px}px"
     )
-    end_overlap = config_data.get("end_overlap", start_overlap)
-    step_overlap = config_data.get("step_overlap", 10)
-    overlap_px = config_data.get("overlap_px", 150)
-    overlap_pct_dataset = config_data.get("overlap_pct", 10)
-    start_pct = config_data.get("start_pct", 20)
+    stride_w = stride_h = int(chunk_width - overlap_px)
+    chunk_dir = os.path.join(chunk_base_dir, basename)
+    os.makedirs(chunk_dir, exist_ok=True)
+    chunk_id = 0
+    logger.info(f"{img_h}, {stride_h}, {stride_w}")
+    for y in range(0, img_h, stride_h):
+        chunk_end_y = min(img_h, y + chunk_height)
+        start_y = max(0, chunk_end_y - chunk_height)
+        for x in range(0, img_w, stride_w):
+            chunk_end_x = min(img_w, x + chunk_width)
+            start_x = max(0, chunk_end_x - chunk_width)
+            chunk = image[
+                int(start_y) : int(chunk_end_y), int(start_x) : int(chunk_end_x)
+            ]
+            chunk_filename = os.path.join(chunk_dir, f"chunk_{start_x}_{start_y}.jpg")
+            cv2.imwrite(chunk_filename, chunk)
+            chunk_id += 1
 
-    end_pct = config_data.get("end_pct", 40)
-    step_pct = config_data.get("step_pct", 10)
 
-    for image_file in os.listdir(image_dir):
-        if not image_file.lower().endswith((".jpg", ".jpeg", ".png")):
-            continue
-        image_path = os.path.join(image_dir, image_file)
-        image = cv2.imread(image_path)
-        if image is None:
-            continue
-        img_h, img_w = image.shape[:2]
-        base_name = os.path.splitext(image_file)[0]
-        results[image_file] = {"original": image_path, "chunking_strategies": {}}
+def chunk_pct_ovp_data_px(
+    chunk_base_dir: str,
+    start_pct: int,
+    end_pct: int,
+    img_w: int,
+    img_h: int,
+    basename: str,
+    overlap_px: int,
+    image: cv2.typing.MatLike,
+):
 
-        if chunking_type == "percentage":
-            results[image_file]["chunking_strategies"]["percentage"] = {}
-            for chunk_pct in range(start_pct, end_pct + 1, step_pct):
-                chunk_width = max(1, (img_w * chunk_pct) // 100)
-                chunk_height = max(1, (img_h * chunk_pct) // 100)
-                results[image_file]["chunking_strategies"]["percentage"][
-                    str(chunk_pct)
-                ] = {}
-                for overlap_pct in range(start_overlap, end_overlap + 1, step_overlap):
-                    stride_w = max(1, int(chunk_width * (1 - overlap_pct / 100)))
-                    stride_h = max(1, int(chunk_height * (1 - overlap_pct / 100)))
-                    chunk_dir = os.path.join(
-                        chunk_base_dir,
-                        "percentage",
-                        f"pct_{chunk_pct}",
-                        f"overlap_{overlap_pct}",
-                        base_name,
-                    )
-                    os.makedirs(chunk_dir, exist_ok=True)
-                    predictions = []
-                    chunk_id = 0
-                    for y in range(0, img_h, stride_h):
-                        chunk_end_y = min(img_h, y + chunk_height)
-                        start_y = max(0, chunk_end_y - chunk_height)
-                        for x in range(0, img_w, stride_w):
-                            chunk_end_x = min(img_w, x + chunk_width)
-                            start_x = max(0, chunk_end_x - chunk_width)
-                            chunk = image[start_y:chunk_end_y, start_x:chunk_end_x]
-                            chunk_filename = os.path.join(
-                                chunk_dir, f"chunk_{chunk_id:03}.jpg"
-                            )
-                            cv2.imwrite(chunk_filename, chunk)
-                            predictions.append(chunk_filename)
-                            chunk_id += 1
-                    results[image_file]["chunking_strategies"]["percentage"][
-                        str(chunk_pct)
-                    ][f"overlap_{overlap_pct}"] = {
-                        "predictions": predictions,
-                        "stitched": {"nms": "", "custom": ""},
-                        "overlap_percent": overlap_pct,
-                    }
+    for chunk_pct in range(start_pct, end_pct + 1, 5):
+        chunk_width = max(1, (img_w * chunk_pct) // 100)
+        chunk_height = max(1, (img_h * chunk_pct) // 100)
 
-        elif chunking_type == "fixed":
-            chunk_width = config_data.get("chunk_width", 640)
-            chunk_height = config_data.get("chunk_height", 640)
-            stride_w = stride_h = 150
+        stride_w = stride_h = chunk_width - overlap_px
+        chunk_dir = os.path.join(chunk_base_dir, basename)
+        os.makedirs(chunk_dir, exist_ok=True)
+        chunk_id = 0
+        for y in range(0, img_h, stride_h):
+            chunk_end_y = min(img_h, y + chunk_height)
+            start_y = max(0, chunk_end_y - chunk_height)
+            for x in range(0, img_w, stride_w):
+                chunk_end_x = min(img_w, x + chunk_width)
+                start_x = max(0, chunk_end_x - chunk_width)
+                chunk = image[start_y:chunk_end_y, start_x:chunk_end_x]
+                chunk_filename = os.path.join(
+                    chunk_dir, f"chunk_{start_x}_{start_y}.jpg"
+                )
+                cv2.imwrite(chunk_filename, chunk)
+                chunk_id += 1
+
+
+def chunk_pct_ovp_pct(
+    overlap_type: str,
+    chunk_base_dir: str,
+    start_pct: int,
+    end_pct: int,
+    img_w: int,
+    img_h: int,
+    start_overlap: int,
+    end_overlap: int,
+    basename: str,
+    image: cv2.typing.MatLike,
+):
+
+    for chunk_pct in range(start_pct, end_pct + 1, 5):
+        chunk_width = max(1, (img_w * chunk_pct) // 100)
+        chunk_height = max(1, (img_h * chunk_pct) // 100)
+
+        for overlap_pct in range(start_overlap, end_overlap + 1, 5):
+            stride_w = max(1, int(chunk_width * (1 - overlap_pct / 100)))
+            stride_h = max(1, int(chunk_height * (1 - overlap_pct / 100)))
             chunk_dir = os.path.join(
-                chunk_base_dir, f"fixed_{chunk_width}x{chunk_height}", base_name
+                chunk_base_dir,
+                f"pct_{chunk_pct}",
+                f"overlap_{overlap_pct}",
+                basename,
             )
             os.makedirs(chunk_dir, exist_ok=True)
-            predictions = []
+
+            chunked_images: List[str] = []
             chunk_id = 0
             for y in range(0, img_h, stride_h):
                 chunk_end_y = min(img_h, y + chunk_height)
@@ -108,151 +153,183 @@ def generate_results(session_dir: str, config_data: Dict[str, Any]) -> Dict[str,
                     chunk_end_x = min(img_w, x + chunk_width)
                     start_x = max(0, chunk_end_x - chunk_width)
                     chunk = image[start_y:chunk_end_y, start_x:chunk_end_x]
-                    chunk_filename = os.path.join(chunk_dir, f"chunk_{chunk_id:03}.jpg")
+                    chunk_filename = os.path.join(
+                        chunk_dir, f"chunk_{start_x}_{start_y}.jpg"
+                    )
                     cv2.imwrite(chunk_filename, chunk)
-                    predictions.append(chunk_filename)
+                    chunked_images.append(chunk_filename)
                     chunk_id += 1
-            results[image_file]["chunking_strategies"]["fixed"] = {
-                f"{chunk_width}x{chunk_height}": {
-                    "predictions": predictions,
-                    "stitched": {"nms": "", "custom": ""},
-                }
-            }
 
-        elif chunking_type == "pixel":
-            results[image_file]["chunking_strategies"]["pixel"] = {
-                "chunking_skipped": True
-            }
 
-        elif chunking_type == "dataset":
-            results[image_file]["chunking_strategies"]["dataset"] = {}
-            for chunk_pct in range(start_pct, end_pct + 1, step_pct):
-                chunk_width = max(1, (img_w * chunk_pct) // 100)
-                chunk_height = max(1, (img_h * chunk_pct) // 100)
-                results[image_file]["chunking_strategies"]["dataset"][
-                    str(chunk_pct)
-                ] = {}
-                if "overlap_px" in config_data:
-                    ow, oh = overlap_px, overlap_px
-                    stride_w = max(1, chunk_width - ow)
-                    stride_h = max(1, chunk_height - oh)
-                    overlap_key = f"overlap_{ow}px"
-                    overlap_val = ow
-                elif "overlap_pct" in config_data:
-                    ow = int(img_w * (overlap_pct_dataset / 100))
-                    oh = int(img_h * (overlap_pct_dataset / 100))
-                    stride_w = max(1, chunk_width - ow)
-                    stride_h = max(1, chunk_height - oh)
-                    overlap_key = f"overlap_{overlap_pct_dataset}pct"
-                    overlap_val = overlap_pct_dataset
-                else:
-                    continue
-                chunk_dir = os.path.join(
+def generate_results(session_dir: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
+
+    image_dir = os.path.join(session_dir, "images")
+    chunk_base_dir = os.path.join(session_dir, "chunks")
+    image_path = pred_dir_list = None
+    results: Dict[str, Any] = {}
+
+    # Extract chunking configurations
+    chunking_type: str = config_data.get("chunking", {}).get("type", "")
+    chunk_params = config_data.get("chunking", {}).get("params", "")
+
+    # Overlap configurations
+    overlap_type: str = config_data.get("overlap", {}).get("type", "")
+    overlap_params = config_data.get("overlap", {}).get("params", {})
+
+    # Stitching configurations
+    stitching_type: str = config_data.get("stitching", {}).get("type", "")
+    stitching_params = config_data.get("stitching", {}).get("params", {})
+
+    for image_file in os.listdir(image_dir):
+        if not image_file.lower().endswith((".jpg", ".jpeg", ".png")):
+            continue
+        image_path = os.path.join(image_dir, image_file)
+        image = cv2.imread(image_path)
+
+        img_h, img_w = image.shape[:2]
+        base_name = os.path.splitext(image_file)[0]
+
+        if chunking_type == "percentage":
+            start_pct = chunk_params.get("start_pct", 0)
+            end_pct = chunk_params.get("end_pct", 0)
+            if overlap_type == "percentage":
+                start_overlap = overlap_params.get("start_pct", 0)
+                end_overlap = overlap_params.get("end_pct", 0)
+                chunk_pct_ovp_pct(
+                    overlap_type,
                     chunk_base_dir,
-                    "dataset",
-                    f"pct_{chunk_pct}",
-                    overlap_key,
+                    start_pct,
+                    end_pct,
+                    img_w,
+                    img_h,
+                    start_overlap,
+                    end_overlap,
                     base_name,
+                    image,
                 )
-                os.makedirs(chunk_dir, exist_ok=True)
-                predictions = []
-                chunk_id = 0
-                for y in range(0, img_h, stride_h):
-                    chunk_end_y = min(img_h, y + chunk_height)
-                    start_y = max(0, chunk_end_y - chunk_height)
-                    for x in range(0, img_w, stride_w):
-                        chunk_end_x = min(img_w, x + chunk_width)
-                        start_x = max(0, chunk_end_x - chunk_width)
-                        chunk = image[start_y:chunk_end_y, start_x:chunk_end_x]
-                        chunk_filename = os.path.join(
-                            chunk_dir, f"chunk_{chunk_id:03}.jpg"
-                        )
-                        cv2.imwrite(chunk_filename, chunk)
-                        predictions.append(chunk_filename)
-                        chunk_id += 1
-                results[image_file]["chunking_strategies"]["dataset"][str(chunk_pct)][
-                    overlap_key
-                ] = {
-                    "predictions": predictions,
-                    "stitched": {"nms": "", "custom": ""},
-                    (
-                        "overlap_px"
-                        if "overlap_px" in config_data
-                        else "overlap_percent"
-                    ): overlap_val,
-                }
+            elif overlap_type == "dataset_pct":
+                overlap_pct = (
+                    config_data.get("overlap", {})
+                    .get("params", "")
+                    .get("overlap_pct", "")
+                )
+                chunk_pct_ovp_pct(
+                    overlap_type,
+                    chunk_base_dir,
+                    start_pct,
+                    end_pct,
+                    img_w,
+                    img_h,
+                    overlap_pct,
+                    overlap_pct + 1,
+                    base_name,
+                    image,
+                )
+            else:
+                overlap_px = overlap_params.get("overlap_px", 0)
+                chunk_pct_ovp_data_px(
+                    chunk_base_dir,
+                    start_pct,
+                    end_pct,
+                    img_w,
+                    img_h,
+                    base_name,
+                    overlap_px,
+                    image,
+                )
+        elif chunking_type == "fixed":
+            chunk_width = chunk_params.get("width", 640)
+            chunk_height = chunk_params.get("height", 640)
 
-    # Before running stitching:
-    original_sizes = {}
-    image_name_to_id = {}
-    image_id_counter = 1
+            if overlap_type == "percentage":
+                start_overlap = overlap_params.get("start_pct", 0)
+                end_overlap = overlap_params.get("end_pct", 0)
+                chunk_fixed_ovp_pct(
+                    chunk_base_dir,
+                    chunk_width,
+                    chunk_height,
+                    overlap_type,
+                    base_name,
+                    start_overlap,
+                    end_overlap,
+                    img_w,
+                    img_h,
+                    image,
+                )
+            elif overlap_type == "dataset_pct":
+                overlap_pct = (
+                    config_data.get("overlap", {})
+                    .get("params", "")
+                    .get("overlap_pct", "")
+                )
+                chunk_fixed_ovp_pct(
+                    chunk_base_dir,
+                    chunk_width,
+                    chunk_height,
+                    overlap_type,
+                    base_name,
+                    overlap_pct,
+                    overlap_pct + 1,
+                    img_w,
+                    img_h,
+                    image,
+                )
+            else:
+                overlap_px = overlap_params.get("overlap_px", 0)
+                chunk_fixed_ovp_data_px(
+                    chunk_base_dir,
+                    chunk_width,
+                    chunk_height,
+                    img_w,
+                    img_h,
+                    base_name,
+                    overlap_px,
+                    image,
+                )
 
-    # 2. Run model predictions for all chunking strategies
-    for image_file, image_info in results.items():
-        chunking_strategies = image_info["chunking_strategies"]
-        chunk_counts = run_model_predictions_on_chunks(chunking_strategies)
-        image_info["chunk_counts"] = chunk_counts
+    # Run model predictions for all chunk
+    if chunking_type == "percentage" and overlap_type in ["percentage", "dataset_pct"]:
+        for dir in os.listdir(chunk_base_dir):
+            dir_path = os.path.join(chunk_base_dir, dir)
+            if not os.path.isdir(dir_path):
+                continue
 
-        # 3. For each chunking strategy/combination, run stitching and update paths
-        for strategy, strategy_dict in chunking_strategies.items():
-            for chunk_pct, overlap_dict in strategy_dict.items():
-                for overlap_key, combo in overlap_dict.items():
-                    chunk_dir = (
-                        os.path.dirname(combo["predictions"][0])
-                        if combo["predictions"]
-                        else None
-                    )
-                    print(chunk_dir)
-                    if not chunk_dir or not os.path.isdir(chunk_dir):
+            logger.info("Traversing the directory: %s", dir_path)
+            for overlap_dir in os.listdir(dir_path):
+                overlap_dir_path = os.path.join(dir_path, overlap_dir)
+                if not os.path.isdir(overlap_dir_path):
+                    continue
+                logger.info("Processing overlap directory: %s", overlap_dir_path)
+                for image_dir in os.listdir(overlap_dir_path):
+                    image_dir_path = os.path.join(overlap_dir_path, image_dir)
+                    if not os.path.isdir(image_dir_path):
                         continue
+                    logger.info("Processing image directory: %s", image_dir_path)
+                    # Run model predictions on each chunk directory
+                    pred_dir_list = run_model_predictions_on_chunks(image_dir_path)
+    else:
+        for image_dir in os.listdir(chunk_base_dir):
 
-                    for chunk_path in combo["predictions"]:
-                        filename = os.path.basename(chunk_path)
+            image_dir_path = os.path.join(chunk_base_dir, image_dir)
+            if not os.path.isdir(image_dir_path):
+                continue
 
-                        # if "_x" not in filename or "_y" not in filename:
-                        #     continue
+            # Run model predictions on each chunk directory
+            pred_dir_list = run_model_predictions_on_chunks(image_dir_path)
 
-                        original_image_name = filename
-
-                        if original_image_name not in original_sizes:
-                            # Load actual original image from disk to get dimensions
-                            try:
-                                image_path = os.path.join(chunk_dir, original_image_name)
-                                img = cv2.imread(image_path)
-                                h, w = img.shape[:2]
-                                original_sizes[original_image_name] = (w, h)
-
-                                image_name_to_id[original_image_name] = image_id_counter
-                                image_id_counter += 1
-                            except Exception as e:
-                                print(f"⚠️ Failed to load image {original_image_name}: {e}")
-                    
-
-                    categories_map = [
-                        {"name": "chair", "id": 100},
-                        {"name": "table", "id": 101}, 
-                        {"name": "table-chair", "id": 103}, 
-                    ]
-
-
-                    # NMS stitching
-                    stitched_nms_path = os.path.join(chunk_dir, "stitched_nms.json")
-                    # Placeholder: you must provide original_sizes, image_name_to_id, categories_map
-                    stitched_nms = stitch_chunks_nms(chunk_dir, original_sizes, image_name_to_id, categories_map)
-                    with open(stitched_nms_path, "w") as f:
-                        json.dump(stitched_nms, f, indent=2)
-                    combo["stitched"]["nms"] = stitched_nms_path
-                    # Custom stitching placeholder
-                    stitched_custom_path = os.path.join(
-                        chunk_dir, "stitched_custom.json"
-                    )
-                    stitched_custom = stitch_chunks_custom(chunk_dir, original_sizes, image_name_to_id, categories_map)
-                    with open(stitched_custom_path, "w") as f:
-                        json.dump(stitched_custom, f, indent=2)
-                    combo["stitched"]["custom"] = stitched_custom_path
-
-
-    # make the logs of the results
-    logger.info(results)
-    return results
-
+    # Perform stitching based on the stitching type
+    if stitching_type == "custom":
+        min_distance_thresh = stitching_params.get("intersection_thresh", 0.5)
+        comparison_thresh = stitching_params.get("comparison_thresh", 0.5)
+    else:
+        logger.info(f"Starting NMS stitching on {len(pred_dir_list)} directories.")
+        for pred_dir in pred_dir_list:
+            if not os.path.isdir(pred_dir):
+                continue
+            logger.info("Stitching chunks in directory: %s", pred_dir)
+            stitch_chunks_nms(
+                predictions_dir=pred_dir,
+                image_path=image_path,
+                iou_thresh=stitching_params.get("iou_thresh", 0.6),
+                conf_thresh=stitching_params.get("conf_thresh", 0.3),
+            )
