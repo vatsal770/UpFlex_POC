@@ -65,42 +65,52 @@ def get_color_for_class(class_id):
     }
     return color_map.get(class_id, (128, 128, 128))  # Gray fallback
 
+
 def draw_predictions_single_image(coco, image_path, output_dir):
     """
-    Draw predictions from COCO-style annotations on a single image.
-    
+    Draw predictions from COCO-style annotations on a single image with image_id=1.
+
     Args:
         coco: COCO-format dictionary (images, annotations, categories)
-        image_root_dir: Path to folder containing the original image
+        image_path: Path to the original image
         output_dir: Path to save the annotated image
     """
     os.makedirs(output_dir, exist_ok=True)
 
     img = cv2.imread(image_path)
-    logger.info(f"Image loaded Successfully")
     if img is None:
-        logger.info(f"⚠️ Could not load image: {image_path}")
+        logger.warning(f"⚠️ Could not load image: {image_path}")
         return
 
-    # Map category_id to label
+    logger.info("✅ Image loaded successfully")
+
+    # Build category_id → name map
     id_to_name = {cat["id"]: cat["name"] for cat in coco["categories"]}
+    drawn_labels = set()
 
     for pred in coco["annotations"]:
         if pred["image_id"] != 1:
-            continue  # skip if for some reason it's not image_id 1
+            continue
 
         x, y, w, h = map(int, pred["bbox"])
-        cat_id = pred["category_id"]
-        label = id_to_name.get(cat_id, "unknown")
-        color = get_color_for_class(cat_id)
+        category_id = pred["category_id"]
+        label = id_to_name.get(category_id, "unknown")
+        color = get_color_for_class(category_id)
 
+        # Draw rectangle and prediction ID
         cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(img, f"{label} ({pred['id']})", (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        cv2.putText(img, str(pred["id"]), (x, y - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-        out_path = os.path.join(output_dir, f"annotated_Final_Custom")
-        cv2.imwrite(out_path, img)
-        logger.info(f"Image_saved_successfully!!!!!!!!!!!")
+        # Only write label once per category
+        if label not in drawn_labels:
+            cv2.putText(img, label, (10, 30 + 25 * len(drawn_labels)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+            drawn_labels.add(label)
+
+    out_path = os.path.join(output_dir, "annotated_Final_Custom.jpg")
+    cv2.imwrite(out_path, img)
+    logger.info(f"✅ Saved annotated image to: {out_path}")
 
 
 
@@ -113,6 +123,13 @@ def stitch_chunks_custom(
     """
     Custom stitching logic using proximity-based union of boxes.
     """
+
+    category_map = {
+        "chair": 100,
+        "table": 101,
+        "table-chair": 103    
+        }
+
     image = cv2.imread(image_path)
     original_h, original_w  = image.shape[:2]
     image_name = os.path.basename(image_path)
@@ -137,7 +154,7 @@ def stitch_chunks_custom(
                 "name": "chair"
             },
             {
-                "id": 101,
+                "id": 103,
                 "name": "table-chair"
             }
         ]
@@ -180,7 +197,8 @@ def stitch_chunks_custom(
         preds = []
         for ann in annotations:
             x1, y1, w, h = ann["bbox"]
-            cls_id = ann['category_id']
+            label = ann["label"]
+            cls_id = category_map[label]
             preds.append([x1, y1, w, h, cls_id])
 
         all_chunk_preds.append(((chunk_x, chunk_y), preds, 1))
@@ -265,7 +283,7 @@ def stitch_chunks_custom(
 
             for group_boxes in group_dict.values():
                 merged_box = merge_boxes(group_boxes)
-                coco_predictions.append({
+                coco_predictions["annotations"].append({
                     "id": ann_id,
                     "image_id": image_id,
                     "bbox": [round(x, 2) for x in merged_box],

@@ -1,13 +1,15 @@
 import json
 import os
-from pathlib import Path
-
-from typing import List
-
 import cv2
+import logging
+
+from pathlib import Path
+from typing import List
 import supervision as sv
 from inference import get_model
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def run_model_predictions_on_chunks(image_dir: str) -> List[str]:
 
