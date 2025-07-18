@@ -319,8 +319,23 @@ def generate_results(session_dir: str, config_data: Dict[str, Any]) -> Dict[str,
 
     # Perform stitching based on the stitching type
     if stitching_type == "custom":
+        logger.info(f"Starting Custom stitching on {len(pred_dir_list)} directories.")
+
         min_distance_thresh = stitching_params.get("intersection_thresh", 0.5)
         comparison_thresh = stitching_params.get("comparison_thresh", 0.5)
+
+        for pred_dir in pred_dir_list:
+            if not os.path.isdir(pred_dir):
+                continue
+            
+            logger.info("Stiching chunks in directory: %s", {pred_dir})
+            stitch_chunks_custom(
+                predictions_dir = pred_dir,
+                image_path = image_path,
+                merge_thresh = min_distance_thresh
+            )
+        
+
     else:
         logger.info(f"Starting NMS stitching on {len(pred_dir_list)} directories.")
         for pred_dir in pred_dir_list:

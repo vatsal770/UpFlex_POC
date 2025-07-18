@@ -2,9 +2,59 @@ import os
 import json
 import cv2   
 import re
+import logging
     
+from pathlib import Path
 from collections import defaultdict
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+def get_color_for_class(class_id):
+    """Assign fixed RGB colors per class_id."""
+    color_map = {
+        100: (0, 0, 255),    # Red (chair)
+        101: (0, 255, 0),    # Green (table)
+        103: (255, 0, 0)     # Blue (table-chair)
+    }
+    return color_map.get(class_id, (128, 128, 128))  # Gray fallback
+
+def draw_predictions_single_image(coco, image_path, output_dir):
+    """
+    Draw predictions from COCO-style annotations on a single image.
+    
+    Args:
+        coco: COCO-format dictionary (images, annotations, categories)
+        image_root_dir: Path to folder containing the original image
+        output_dir: Path to save the annotated image
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    img = cv2.imread(image_path)
+    logger.info(f"Image loaded Successfully")
+    if img is None:
+        logger.info(f"⚠️ Could not load image: {image_path}")
+        return
+
+    # Map category_id to label
+    id_to_name = {cat["id"]: cat["name"] for cat in coco["categories"]}
+
+    for pred in coco["annotations"]:
+        if pred["image_id"] != 1:
+            continue  # skip if for some reason it's not image_id 1
+
+        x, y, w, h = map(int, pred["bbox"])
+        cat_id = pred["category_id"]
+        label = id_to_name.get(cat_id, "unknown")
+        color = get_color_for_class(cat_id)
+
+        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(img, f"{label} ({pred['id']})", (x, y - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+        out_path = os.path.join(output_dir, f"annotated_Final_NMS")
+        cv2.imwrite(out_path, img)
+        logger.info("Image saved successfully!!!!!!!!!!!!!!!")
 
 
 def stitch_chunks_nms(
@@ -59,9 +109,12 @@ def stitch_chunks_nms(
         file_path = os.path.join(predictions_dir, file)
         with open(file_path, "r") as f:
             chunk_data = json.load(f)
-        chunk_path = chunk_data["image"]
+
+        chunk_image = chunk_data["image"]
+        filename = Path(chunk_image.split("_x")[0] + ".jpg").stem
+
         annotations = chunk_data["annotations"]
-        filename = os.path.basename(chunk_path)
+
 
         match = re.search(r"_x(\\d+)_y(\\d+)\\.jpg", filename)
         if not match:
@@ -92,6 +145,7 @@ def stitch_chunks_nms(
             global_box_h = min(h, img_h - global_box_y)
             if global_box_w <= 0 or global_box_h <= 0:
                 continue
+
             global_box = [global_box_x, global_box_y, global_box_w, global_box_h]
             category_boxes[int(cat)].append(global_box)
             category_confs[int(cat)].append(float(conf))
@@ -109,12 +163,11 @@ def stitch_chunks_nms(
             box = boxes[i]
             score = confidences[i]
             image_id = img_ids[i]
-            coco_predictions["annotations"].append(
+            coco_predictions.append(
                 {
                     "id": ann_id,
                     "image_id": image_id,
                     "bbox": [round(x, 2) for x in box],
-                    "score": round(score, 4),
                     "category_id": cat_id,
                 }
             )
@@ -123,3 +176,5 @@ def stitch_chunks_nms(
     output_json_path = os.path.join(predictions_dir, "stitched_predictions_nms.json")
     with open(output_json_path, "w") as f:
         json.dump(coco_predictions, f, indent=4)
+
+    draw_predictions_single_image(coco_predictions, image_path, predictions_dir)
