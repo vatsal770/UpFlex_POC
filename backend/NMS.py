@@ -1,28 +1,30 @@
-import os
 import json
-import cv2   
-import re
 import logging
-    
-from pathlib import Path
+import os
+import re
 from collections import defaultdict
+from pathlib import Path
+
+import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
+
 def get_color_for_class(class_id):
     """Assign fixed RGB colors per class_id."""
     color_map = {
-        100: (0, 0, 255),    # Red (chair)
-        101: (0, 255, 0),    # Green (table)
-        103: (255, 0, 0)     # Blue (table-chair)
+        100: (0, 0, 255),  # Red (chair)
+        101: (0, 255, 0),  # Green (table)
+        103: (255, 0, 0),  # Blue (table-chair)
     }
     return color_map.get(class_id, (128, 128, 128))  # Gray fallback
+
 
 def draw_predictions_single_image(coco, image_path, output_dir):
     """
     Draw predictions from COCO-style annotations on a single image.
-    
+
     Args:
         coco: COCO-format dictionary (images, annotations, categories)
         image_root_dir: Path to folder containing the original image
@@ -49,80 +51,77 @@ def draw_predictions_single_image(coco, image_path, output_dir):
         color = get_color_for_class(cat_id)
 
         cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(img, f"{label} ({pred['id']})", (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        cv2.putText(
+            img,
+            f"{label}",
+            (x, y - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            color,
+            2,
+        )
 
-        out_path = os.path.join(output_dir, f"annotated_Final_NMS")
+        out_path = os.path.join(output_dir, f"annotated_Final_NMS.jpg")
         cv2.imwrite(out_path, img)
-        logger.info("Image saved successfully!!!!!!!!!!!!!!!")
+    logger.info("Image saved successfully!")
 
 
 def stitch_chunks_nms(
     predictions_dir: str,
     image_path: str,
-    iou_thresh: float=0.6,
-    conf_thresh: float=0.3,
+    iou_thresh: float = 0.6,
+    conf_thresh: float = 0.3,
 ):
     """
     NMS-based stitching logic. Loads chunk predictions, maps to original image, applies NMS, and returns final predictions.
     """
+    logger.info(f"Starting NMS stitching.")
 
-    category_map = {
-        "chair": 100,
-        "table": 101,
-        "table-chair": 102
-    }
+    category_map = {"chair": 100, "table": 101, "table-chair": 102}
 
     image = cv2.imread(image_path)
     img_w, img_h = image.shape[1], image.shape[0]
     image_name = os.path.basename(image_path)
 
+    logger.info(f"Image dimensions: {img_w}, {img_h}")
+
     coco_predictions = {
-        "images": [
-            {
-                "id": 1, 
-                "file_name": image_name,
-                "width": img_w, 
-                "height":img_h
-            }
-        ],
+        "images": [{"id": 1, "file_name": image_name, "width": img_w, "height": img_h}],
         "categories": [
-            {
-                "id": 101,
-                "name": "table"
-            },
-            {
-                "id": 100,
-                "name": "chair"
-            },
-            {
-                "id": 101,
-                "name": "table-chair"
-            }
-        ]
+            {"id": 101, "name": "table"},
+            {"id": 100, "name": "chair"},
+            {"id": 103, "name": "table-chair"},
+        ],
     }
 
     all_chunk_preds = []
     for file in os.listdir(predictions_dir):
         if not file.endswith(".json"):
             continue
+
+        logger.info("Loading the annotation file.")
+
         file_path = os.path.join(predictions_dir, file)
         with open(file_path, "r") as f:
             chunk_data = json.load(f)
 
         chunk_image = chunk_data["image"]
-        filename = Path(chunk_image.split("_x")[0] + ".jpg").stem
+        filename = Path(chunk_image).stem
 
         annotations = chunk_data["annotations"]
 
+        logger.info("Successfully laoded the annotation file.")
+        match = re.search(r"_x(\d+)_y(\d+)", filename)
+        logger.info(f"Match performed on {filename}. results: {match}")
 
-        match = re.search(r"_x(\\d+)_y(\\d+)\\.jpg", filename)
         if not match:
             continue
 
         chunk_x = int(match.group(1))
         chunk_y = int(match.group(2))
 
+        logger.info(f"Processing chunk at ({chunk_x}, {chunk_y})")
+        logger.info(f"Processing the json files to extract all the annotations. {annotations}")
         preds = []
         for ann in annotations:
             x1, y1, w, h = ann["bbox"]
@@ -131,6 +130,8 @@ def stitch_chunks_nms(
             cls_id = category_map[label]
             preds.append([x1, y1, w, h, conf, cls_id])
         all_chunk_preds.append(((chunk_x, chunk_y), preds, 1))
+
+    logger.info(f"Applying NMS logic on {len(all_chunk_preds)} chunks.")
 
     # NMS logic
     category_boxes = defaultdict(list)
@@ -151,7 +152,7 @@ def stitch_chunks_nms(
             category_confs[int(cat)].append(float(conf))
             category_img_ids[int(cat)].append(image_id)
 
-    
+    logger.info(f"Applying NMS logic on orignal image scaled backed bboxes, {len(category_boxes)} chunks.")
     coco_predictions["annotations"] = []
     ann_id = 1
     for cat_id, boxes in category_boxes.items():
@@ -163,7 +164,7 @@ def stitch_chunks_nms(
             box = boxes[i]
             score = confidences[i]
             image_id = img_ids[i]
-            coco_predictions.append(
+            coco_predictions["annotations"].append(
                 {
                     "id": ann_id,
                     "image_id": image_id,
@@ -172,9 +173,13 @@ def stitch_chunks_nms(
                 }
             )
             ann_id += 1
-    
-    output_json_path = os.path.join(predictions_dir, "stitched_predictions_nms.json")
+
+    logger.info(f"Total predictions after NMS: {len(coco_predictions['annotations'])}")
+    stitched_dir = os.path.join(predictions_dir,"stitched_predictions_nms")
+    os.makedirs(stitched_dir, exist_ok=True)
+    output_json_path = os.path.join(stitched_dir, "stitched_predictions_nms.json")
     with open(output_json_path, "w") as f:
         json.dump(coco_predictions, f, indent=4)
 
-    draw_predictions_single_image(coco_predictions, image_path, predictions_dir)
+    logger.info(f"NMS stitching completed, json saved at {output_json_path}. Drawing predictions on the image.")
+    draw_predictions_single_image(coco_predictions, image_path, stitched_dir)

@@ -9,9 +9,25 @@ from Custom import stitch_chunks_custom
 from model_predictions import run_model_predictions_on_chunks
 from NMS import stitch_chunks_nms
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging once for all modules
+logger = logging.getLogger("chunking-1")
+logger.setLevel(logging.INFO)
 
-logger = logging.getLogger(__name__)
+console_handler = logging.StreamHandler()
+console_formatter = logging.Formatter(
+    "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
+)
+console_handler.setFormatter(console_formatter)
+
+# Prevent duplicate logs
+if not logger.hasHandlers():
+    logger.addHandler(console_handler)
+
+# Apply same handler to root to catch other modules' logs
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+if not root_logger.hasHandlers():
+    root_logger.addHandler(console_handler)
 
 
 def chunk_fixed_ovp_pct(
@@ -44,7 +60,7 @@ def chunk_fixed_ovp_pct(
                     int(start_y) : int(chunk_end_y), int(start_x) : int(chunk_end_x)
                 ]
                 chunk_filename = os.path.join(
-                    chunk_dir, f"chunk_{start_x}_{start_y}.jpg"
+                    chunk_dir, f"chunk_x{start_x}_y{start_y}.jpg"
                 )
                 cv2.imwrite(chunk_filename, chunk)
                 chunked_images.append(chunk_filename)
@@ -78,7 +94,7 @@ def chunk_fixed_ovp_data_px(
             chunk = image[
                 int(start_y) : int(chunk_end_y), int(start_x) : int(chunk_end_x)
             ]
-            chunk_filename = os.path.join(chunk_dir, f"chunk_{start_x}_{start_y}.jpg")
+            chunk_filename = os.path.join(chunk_dir, f"chunk_x{start_x}_y{start_y}.jpg")
             cv2.imwrite(chunk_filename, chunk)
             chunk_id += 1
 
@@ -110,7 +126,7 @@ def chunk_pct_ovp_data_px(
                 start_x = max(0, chunk_end_x - chunk_width)
                 chunk = image[start_y:chunk_end_y, start_x:chunk_end_x]
                 chunk_filename = os.path.join(
-                    chunk_dir, f"chunk_{start_x}_{start_y}.jpg"
+                    chunk_dir, f"chunk_x{start_x}_y{start_y}.jpg"
                 )
                 cv2.imwrite(chunk_filename, chunk)
                 chunk_id += 1
@@ -154,7 +170,7 @@ def chunk_pct_ovp_pct(
                     start_x = max(0, chunk_end_x - chunk_width)
                     chunk = image[start_y:chunk_end_y, start_x:chunk_end_x]
                     chunk_filename = os.path.join(
-                        chunk_dir, f"chunk_{start_x}_{start_y}.jpg"
+                        chunk_dir, f"chunk_x{start_x}_y{start_y}.jpg"
                     )
                     cv2.imwrite(chunk_filename, chunk)
                     chunked_images.append(chunk_filename)
@@ -317,25 +333,24 @@ def generate_results(session_dir: str, config_data: Dict[str, Any]) -> Dict[str,
             # Run model predictions on each chunk directory
             pred_dir_list = run_model_predictions_on_chunks(image_dir_path)
 
+
     # Perform stitching based on the stitching type
     if stitching_type == "custom":
         logger.info(f"Starting Custom stitching on {len(pred_dir_list)} directories.")
 
         min_distance_thresh = stitching_params.get("intersection_thresh", 0.5)
-        comparison_thresh = stitching_params.get("comparison_thresh", 0.5)
+        # comparison_thresh = stitching_params.get("comparison_thresh", 0.5)
 
         for pred_dir in pred_dir_list:
             if not os.path.isdir(pred_dir):
                 continue
-            
+
             logger.info("Stiching chunks in directory: %s", {pred_dir})
             stitch_chunks_custom(
-                predictions_dir = pred_dir,
-                image_path = image_path,
-                merge_thresh = min_distance_thresh
+                predictions_dir=pred_dir,
+                image_path=image_path,
+                merge_thresh=min_distance_thresh,
             )
-        
-
     else:
         logger.info(f"Starting NMS stitching on {len(pred_dir_list)} directories.")
         for pred_dir in pred_dir_list:

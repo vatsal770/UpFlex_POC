@@ -143,6 +143,7 @@ def stitch_chunks_custom(
         ]
     }
 
+    logger.info("Prediction directory: %s", predictions_dir)
 
     # Load chunk predictions
     all_chunk_preds = []

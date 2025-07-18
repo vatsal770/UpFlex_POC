@@ -84,6 +84,6 @@ def run_model_predictions_on_chunks(image_dir: str) -> List[str]:
         output_img_path = os.path.join(annotation_img_dir, f"annotated_{Path(image_file).name}")
         cv2.imwrite(output_img_path, annotated_image)
         
-        pred_dir_list.append(output_json_path)
+    pred_dir_list.append(annotation_json_dir)
     
     return pred_dir_list
