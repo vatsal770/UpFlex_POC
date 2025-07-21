@@ -1,4 +1,5 @@
 backend/uploads
+frontend/only_app.py
 __pycache__
 check
 output

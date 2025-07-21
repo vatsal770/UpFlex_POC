@@ -16,7 +16,6 @@ def run_model_predictions_on_chunks(image_dir: str) -> List[str]:
     # Initialize the prediction model
     model = get_model(model_id="floorplan-o9hev/6", api_key="LLDV1nzXicfTYmlj9CMp")
     image_name = os.path.basename(image_dir)
-    pred_dir_list = [] 
 
     for image_file in os.listdir(image_dir):
         if not image_file.lower().endswith((".jpg", ".jpeg", ".png")):
@@ -40,9 +39,6 @@ def run_model_predictions_on_chunks(image_dir: str) -> List[str]:
 
         annotated_image = bounding_box_annotator.annotate(
             scene=image, detections=detections
-        )
-        annotated_image = label_annotator.annotate(
-            scene=annotated_image, detections=detections
         )
 
         # Save predictions as JSON
@@ -85,7 +81,5 @@ def run_model_predictions_on_chunks(image_dir: str) -> List[str]:
         os.makedirs(annotation_img_dir, exist_ok=True)
         output_img_path = os.path.join(annotation_img_dir, f"annotated_{Path(image_file).name}")
         cv2.imwrite(output_img_path, annotated_image)
-        
-    pred_dir_list.append(annotation_json_dir)
     
-    return pred_dir_list
+    return annotation_json_dir

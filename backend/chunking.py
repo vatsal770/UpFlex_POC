@@ -305,6 +305,7 @@ def generate_results(session_dir: str, config_data: Dict[str, Any]) -> Dict[str,
 
     # Run model predictions for all chunk
     if chunking_type == "percentage" and overlap_type in ["percentage", "dataset_pct"]:
+        pred_dir_list = []
         for dir in os.listdir(chunk_base_dir):
             dir_path = os.path.join(chunk_base_dir, dir)
             if not os.path.isdir(dir_path):
@@ -322,7 +323,8 @@ def generate_results(session_dir: str, config_data: Dict[str, Any]) -> Dict[str,
                         continue
                     logger.info("Processing image directory: %s", image_dir_path)
                     # Run model predictions on each chunk directory
-                    pred_dir_list = run_model_predictions_on_chunks(image_dir_path)
+                    resulting_json_directory = run_model_predictions_on_chunks(image_dir_path)
+                    pred_dir_list.append(resulting_json_directory)
     else:
         for image_dir in os.listdir(chunk_base_dir):
 

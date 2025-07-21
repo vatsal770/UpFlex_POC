@@ -99,8 +99,6 @@ def draw_predictions_single_image(coco, image_path, output_dir):
 
         # Draw rectangle and prediction ID
         cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(img, str(pred["id"]), (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
         # Only write label once per category
         if label not in drawn_labels:

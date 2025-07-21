@@ -3,6 +3,7 @@ import logging
 import os
 import uuid
 from typing import List
+import shutil
 
 from chunking import generate_results
 from fastapi import FastAPI, File, Form, UploadFile
@@ -19,10 +20,14 @@ async def upload_and_process(
     files: List[UploadFile] = File(...), config: str = Form(...)
 ):
     try:
-        # Session Id to generate a unique directory for each upload.
-        session_id = str(uuid.uuid4())
-        uploads_dir = os.path.join("./uploads", session_id)
-        os.makedirs(uploads_dir, exist_ok=True)
+        # Session Name to have a common directory for each upload.
+        session_name = "Visualization"
+        uploads_dir = os.path.join("./uploads", session_name)
+
+        if os.path.exists(uploads_dir):
+            shutil.rmtree(uploads_dir)
+
+        os.makedirs(uploads_dir)
 
         # Save images sent by the user.
         image_dir = os.path.join(uploads_dir, "images")
@@ -45,11 +50,8 @@ async def upload_and_process(
 
         # Generate results
         results = generate_results(uploads_dir, config_data)
-        results_path = os.path.join(uploads_dir, "results.json")
-        with open(results_path, "w") as f:
-            json.dump(results, f, indent=2)
 
-        return JSONResponse({"results_path": results_path})
+
     except Exception as e:
         logger.error("Error processinf files: %s", str(e))
         return JSONResponse(status_code=500, content="Internal Server Error")

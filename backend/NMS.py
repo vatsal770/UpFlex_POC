@@ -54,8 +54,6 @@ def draw_predictions_single_image(coco, image_path, output_dir):
 
         # Draw rectangle and prediction ID
         cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(img, str(pred["id"]), (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
         # Only write label once per category
         if label not in drawn_labels:
@@ -123,7 +121,7 @@ def stitch_chunks_nms(
         chunk_y = int(match.group(2))
 
         logger.info(f"Processing chunk at ({chunk_x}, {chunk_y})")
-        logger.info(f"Processing the json files to extract all the annotations. {annotations}")
+        # logger.info(f"Processing the json files to extract all the annotations. {annotations}")
         preds = []
         for ann in annotations:
             x1, y1, w, h = ann["bbox"]
@@ -177,11 +175,9 @@ def stitch_chunks_nms(
             ann_id += 1
 
     logger.info(f"Total predictions after NMS: {len(coco_predictions['annotations'])}")
-    stitched_dir = os.path.join(predictions_dir,"stitched_predictions_nms")
-    os.makedirs(stitched_dir, exist_ok=True)
-    output_json_path = os.path.join(stitched_dir, "stitched_predictions_nms.json")
+    output_json_path = os.path.join(predictions_dir, "stitched_predictions_nms.json")
     with open(output_json_path, "w") as f:
         json.dump(coco_predictions, f, indent=4)
 
     logger.info(f"NMS stitching completed, json saved at {output_json_path}. Drawing predictions on the image.")
-    draw_predictions_single_image(coco_predictions, image_path, stitched_dir)
+    draw_predictions_single_image(coco_predictions, image_path, predictions_dir)
