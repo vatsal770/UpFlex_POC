@@ -4,35 +4,19 @@ import cv2
 
 from typing import Any, Dict, List
 from pathlib import Path
-from Custom import stitch_chunks_custom
-from model_predictions import run_model_predictions_on_chunks
+
 from zip import zip_folder
 
 # Configure logging once for all modules
-logger = logging.getLogger("chunking-1")
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-console_handler = logging.StreamHandler()
-console_formatter = logging.Formatter(
-    "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
-)
-console_handler.setFormatter(console_formatter)
-
-# Prevent duplicate logs
-if not logger.hasHandlers():
-    logger.addHandler(console_handler)
-
-# Apply same handler to root to catch other modules' logs
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
-if not root_logger.hasHandlers():
-    root_logger.addHandler(console_handler)
-
 
 def chunk_fixed_ovp_pct(
     chunk_base_dir: str,
     chunk_width: int,
     chunk_height: int,
+    overlap_type: str,
+    basename: str,
     start_overlap: int,
     end_overlap: int,
     img_w: int,
@@ -44,12 +28,8 @@ def chunk_fixed_ovp_pct(
         stride_h = max(1, int(chunk_height * (1 - overlap_pct / 100)))
         chunk_dir = os.path.join(
                 chunk_base_dir,
-                f"Dataset",
-                f"Base_chunks",
                 f"size_{chunk_width}-{chunk_height}",
                 f"overlap_{overlap_pct}",
-                f"chunks",
-                f"images",
             )
         os.makedirs(chunk_dir, exist_ok=True)
 
@@ -78,6 +58,7 @@ def chunk_fixed_ovp_data_px(
     chunk_height: int,
     img_w: int,
     img_h: int,
+    basename: str,
     overlap_px: int,
     image: cv2.typing.MatLike,
 ):
@@ -87,12 +68,8 @@ def chunk_fixed_ovp_data_px(
     stride_w = stride_h = int(chunk_width - overlap_px)
     chunk_dir = os.path.join(
                 chunk_base_dir,
-                f"Dataset",
-                f"Base_chunks",
                 f"size_{chunk_width}-{chunk_height}",
                 f"overlap_{overlap_px}",
-                f"chunks",
-                f"images",
             )
     os.makedirs(chunk_dir, exist_ok=True)
     chunk_id = 0
@@ -117,6 +94,7 @@ def chunk_pct_ovp_data_px(
     end_pct: int,
     img_w: int,
     img_h: int,
+    basename: str,
     overlap_px: int,
     image: cv2.typing.MatLike,
 ):
@@ -128,12 +106,8 @@ def chunk_pct_ovp_data_px(
         stride_w = stride_h = chunk_width - overlap_px
         chunk_dir = os.path.join(
                 chunk_base_dir,
-                f"Dataset",
-                f"Base_chunks",
                 f"pct_{chunk_pct}",
                 f"overlap_{overlap_px}",
-                f"chunks",
-                f"images",
             )
         os.makedirs(chunk_dir, exist_ok=True)
         chunk_id = 0
@@ -152,6 +126,7 @@ def chunk_pct_ovp_data_px(
 
 
 def chunk_pct_ovp_pct(
+    overlap_type: str,
     chunk_base_dir: str,
     start_pct: int,
     end_pct: int,
@@ -159,6 +134,7 @@ def chunk_pct_ovp_pct(
     img_h: int,
     start_overlap: int,
     end_overlap: int,
+    basename: str,
     image: cv2.typing.MatLike,
 ):
 
@@ -171,12 +147,8 @@ def chunk_pct_ovp_pct(
             stride_h = max(1, int(chunk_height * (1 - overlap_pct / 100)))
             chunk_dir = os.path.join(
                 chunk_base_dir,
-                f"Dataset",
-                f"Base_chunks",
                 f"pct_{chunk_pct}",
                 f"overlap_{overlap_pct}",
-                f"chunks",
-                f"images",
             )
             os.makedirs(chunk_dir, exist_ok=True)
 
@@ -197,19 +169,11 @@ def chunk_pct_ovp_pct(
                     chunk_id += 1
 
 
-def generate_results(session_dir: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
+def generate_chunks(session_dir: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
 
-    # defining user_images directory
     image_dir = os.path.join(session_dir, "user_images")
-
-    # extracting model_id, api_key, json_formats, selected_classes from the config file
-    model_id = config_data["model_id"]["params"]["model_selected"]
-    api_key = config_data["api_key"]["params"]["api_selected"]
-    json_formats = config_data["json_formats"]["params"]["formats_selected"]
-    selected_classes = config_data["allowed_classes"]["params"]["selected"]
-
-    logger.info(f"Selected Classes are: {selected_classes}")
     image_path = pred_dir_list = None
+    results: Dict[str, Any] = {}
 
     # Extract chunking configurations
     chunking_type: str = config_data.get("chunking", {}).get("type", "")
@@ -230,15 +194,17 @@ def generate_results(session_dir: str, config_data: Dict[str, Any]) -> Dict[str,
         image_path = os.path.join(image_dir, image_file)
         image_name = Path(image_path).stem
 
-        # Changed the main subfolders to be image_names
-        chunk_base_dir = os.path.join(session_dir, image_name)
+        # Created the main subfolders to be "Generated_chunks"
+        chunk_base_dir = Path(session_dir) / "Generated_chunks"/ image_name
+        logger.info(f"chunk directory: {chunk_base_dir}")
 
         logger.info(f"Image Path directory {image_path}")
         image = cv2.imread(image_path)
 
-        # extracting image width and height
+        # Extracting the width and height of the image
         img_h, img_w = image.shape[:2]
         base_name = os.path.splitext(image_file)[0]
+
 
         # checking for each possible combinations of chunking
         if chunking_type == "percentage":
@@ -339,60 +305,12 @@ def generate_results(session_dir: str, config_data: Dict[str, Any]) -> Dict[str,
                     image,
                 )
 
-
-        dataset_root = os.path.join(chunk_base_dir, "Dataset", "Base_chunks")
-        # Run model predictions for all chunk
-        if chunking_type in ["percentage", "fixed"] and overlap_type in ["percentage", "dataset_pct", "dataset_px"]:
-            pred_dir_list = []
-            for dir in os.listdir(dataset_root):
-                dir_path = os.path.join(dataset_root, dir)
-                if not os.path.isdir(dir_path):
-                    continue
-
-                logger.info("Traversing the directory: %s", dir_path)
-                for overlap_dir in os.listdir(dir_path):
-                    overlap_dir_path = os.path.join(dir_path, overlap_dir)
-                    if not os.path.isdir(overlap_dir_path):
-                        continue
-                    logger.info("Processing overlap directory: %s", overlap_dir_path)
-
-                    chunked_img_dir = os.path.join(overlap_dir_path, "chunks", "images")
-
-                    # Run model predictions on each chunk directory
-                    resulting_json_directory = run_model_predictions_on_chunks(session_dir, overlap_dir_path, chunked_img_dir, full_image_name=image_name, model_id=model_id, api_key=api_key, allowed_classes=selected_classes, json_formats=json_formats)
-                    pred_dir_list.append(resulting_json_directory)
-
-
-        # Perform stitching based on the stitching type
-        if stitching_type == "custom":
-            logger.info(f"Starting Custom stitching on {len(pred_dir_list)} directories.")
-
-            min_distance_thresh = stitching_params.get("intersection_thresh", 0.5)
-            comparison_thresh = stitching_params.get("comparison_thresh", 0.5)
-            containment_thresh = stitching_params.get("containment_thresh", 0.5)
-
-            for pred_dir in pred_dir_list:
-                if not os.path.isdir(pred_dir):
-                    continue
-
-                logger.info("Stiching chunks in directory: %s", {pred_dir})
-                stitch_chunks_custom(
-                    session_dir,
-                    predictions_dir=pred_dir,
-                    image_path=image_path,
-                    json_formats=json_formats,
-                    merge_thresh=min_distance_thresh,
-                    comparison_thresh=comparison_thresh,
-                    containment_thresh=containment_thresh,
-                )
-
-    # create zip per json format type
-    for json_format in json_formats:
-        folder_path = os.path.join(session_dir, json_format)     # input_folder
-        zip_output_path = folder_path + ".zip"    # output_zip_path
-        zip_folder(folder_path, zip_output_path)
-        logger.info(f"✅ Folder '{folder_path}' zipped successfully at: {zip_output_path}")
+    logger.info(f"chunks generated successfully!!!!!!!!!!!!!!!!!")
+    folder_path = Path(session_dir) / "Generated_chunks"    # input_folder
+    zip_output_path = Path(session_dir) / "Generated_chunks.zip"     # output_zip_path
+    zip_folder(folder_path, zip_output_path)
+    logger.info(f"✅ Folder '{folder_path}' zipped successfully at: {zip_output_path}")
 
     stripped_session_dir = session_dir.strip(".")
-    backend_session_dir = "./backend" + stripped_session_dir    # adding "./backend" in the session_dir_path
+    backend_session_dir = "./backend" + stripped_session_dir   # adding "./backend" in the session_dir_path
     return backend_session_dir

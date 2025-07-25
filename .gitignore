@@ -1,3 +1,4 @@
+.vscode
 backend/uploads
 frontend/only_app.py
 __pycache__

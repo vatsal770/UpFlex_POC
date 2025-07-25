@@ -175,9 +175,12 @@ def stitch_chunks_nms(
             ann_id += 1
 
     logger.info(f"Total predictions after NMS: {len(coco_predictions['annotations'])}")
-    output_json_path = os.path.join(predictions_dir, "stitched_predictions_nms.json")
+
+    nms_dir = predictions_dir.replace("annotations_json", "NMS")
+    os.makedirs(nms_dir, exist_ok=True)
+    output_json_path = os.path.join(nms_dir, "stitched_predictions_nms.json")
     with open(output_json_path, "w") as f:
         json.dump(coco_predictions, f, indent=4)
 
     logger.info(f"NMS stitching completed, json saved at {output_json_path}. Drawing predictions on the image.")
-    draw_predictions_single_image(coco_predictions, image_path, predictions_dir)
+    draw_predictions_single_image(coco_predictions, image_path, nms_dir)

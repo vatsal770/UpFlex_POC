@@ -3,17 +3,17 @@ import json
 import re
 import logging 
 import cv2
-import numpy as np
-import matplotlib.pyplot as plt
+import shutil
 
 from pathlib import Path
 from collections import defaultdict
+from typing import Any, Dict, List
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def boxes_intersect_enough(box1, box2, min_overlap=15):
+def boxes_intersect_enough(box1, box2, min_overlap=15, comparison_thresh=5, containment_thresh=2):
     x1_min, y1_min, w1, h1 = box1
     x1_max, y1_max = x1_min + w1, y1_min + h1
     x2_min, y2_min, w2, h2 = box2
@@ -27,12 +27,30 @@ def boxes_intersect_enough(box1, box2, min_overlap=15):
     if y_overlap > 0 and x_overlap == 0:
         y_overlap = 0
 
-    if abs(y2_max - y1_max) <= 10 and abs(y2_min - y1_min) <= 10:
+    if abs(y2_max - y1_max) <= comparison_thresh and abs(y2_min - y1_min) <= comparison_thresh:
         y_overlap = 0
-    elif abs(x2_max - x1_max) <= 10 and abs(x2_min - x1_min) <= 10:
+    elif abs(x2_max - x1_max) <= comparison_thresh and abs(x2_min - x1_min) <= comparison_thresh:
         x_overlap = 0
 
-    return x_overlap >= min_overlap or y_overlap >= min_overlap
+    # Containment logic: is box1 inside box2 or vice versa?
+    def is_contained(inner, outer, tol):
+        ix_min, iy_min, iw, ih = inner
+        ix_max, iy_max = ix_min + iw, iy_min + ih
+
+        ox_min, oy_min, ow, oh = outer
+        ox_max, oy_max = ox_min + ow, oy_min + oh
+
+        return (
+            ix_min >= ox_min - tol and
+            iy_min >= oy_min - tol and
+            ix_max <= ox_max + tol and
+            iy_max <= oy_max + tol
+        )
+
+    containment = is_contained(box1, box2, containment_thresh) or is_contained(box2, box1, containment_thresh)
+
+    # Return True if enough overlap OR one box is inside the other
+    return (x_overlap >= min_overlap or y_overlap >= min_overlap) or containment
 
 
 def merge_boxes(boxes):
@@ -114,9 +132,13 @@ def draw_predictions_single_image(coco, image_path, output_dir):
 
 
 def stitch_chunks_custom(
-    predictions_dir,
-    image_path,
-    merge_thresh = 15
+    session_dir: str,
+    predictions_dir: List[str],
+    image_path: str,
+    json_formats: List[str],
+    merge_thresh = 15,
+    comparison_thresh = 5,
+    containment_thresh = 2,
 ):
     """
     Custom stitching logic using proximity-based union of boxes.
@@ -127,36 +149,82 @@ def stitch_chunks_custom(
         "table": 101,
         "table-chair": 103    
         }
+    
+    inverse_category_map = {
+        100: "chair",
+        101: "table",
+        103: "table-chair"
+    }
+    
+    parts = os.path.normpath(predictions_dir).split(os.sep)
+    chunk_pct, overlap = parts[-4], parts[-3]
+
+    image_name = (Path(image_path)).stem
 
     image = cv2.imread(image_path)
     original_h, original_w  = image.shape[:2]
-    image_name = os.path.basename(image_path)
+    updated_image_name = Path(image_path).stem + f"_{chunk_pct}_{overlap}.jpg"
+    
 
+
+############ Defining the base JSON formats ################################
 
     coco_predictions = {
-        "images": [
+        "info": {
+        "year": "2024",
+        "version": "14",
+        "description": "Exported from roboflow.com",
+        "contributor": "",
+        "url": "https://public.roboflow.com/object-detection/undefined",
+        "date_created": "2024-11-25T04:08:53+00:00"
+        },
+
+        "licenses": [
             {
-                "id": 1, 
-                "file_name": image_name,
-                "width": original_w, 
-                "height":original_h
+                "id": 1,
+                "url": "https://creativecommons.org/publicdomain/zero/1.0/",
+                "name": "Public Domain"
             }
         ],
+        
         "categories": [
             {
                 "id": 101,
-                "name": "table"
+                "name": "table",
+                "supercategory": "table-chair"
             },
             {
                 "id": 100,
-                "name": "chair"
+                "name": "chair",
+                "supercategory": "table-chair"
             },
             {
                 "id": 103,
-                "name": "table-chair"
+                "name": "table-chair",
+                "supercategory": "none"
+            }
+        ],
+
+        "images": [
+            {
+                "id": 1, 
+                "file_name": updated_image_name,
+                "width": original_w, 
+                "height":original_h,
+                "date_captured": "2024-11-25T04:08:53+00:00"
             }
         ]
     }
+
+    # In createML JSON format
+    createML_predictions = [
+        {
+            "image": updated_image_name
+        }
+    ]
+###############################################################
+
+
 
     logger.info("Prediction directory: %s", predictions_dir)
 
@@ -166,18 +234,18 @@ def stitch_chunks_custom(
         if not file.endswith(".json"):
             continue
         file_path = os.path.join(predictions_dir, file)
-        # logger.info(file_path)
 
         with open(file_path, "r") as f:
             chunk_data = json.load(f)
 
-        chunk_image = chunk_data["image"]
-
-        filename = Path(chunk_image.split("_x")[0] + ".jpg").stem
+        # extracting the filename of the chunks
+        chunk_image = chunk_data["images"][0]
+        filename = chunk_image["file_name"]    # Extract filename
 
         annotations = chunk_data["annotations"]
 
-        match = re.search(r"_x(\d+)_y(\d+)\.jpg", chunk_image)
+        # extracting the start coordinates of the chunk image from the filename
+        match = re.search(r"_x(\d+)_y(\d+)\.jpg", filename)
         if not match:
             logger.info("Match not Found while tracing back the Chunk image!!!!!!")
             continue
@@ -185,23 +253,18 @@ def stitch_chunks_custom(
         chunk_x = int(match.group(1))
         chunk_y = int(match.group(2))
 
-        logger.info(f"{chunk_x} and {chunk_y}")
+        # logger.info(f"{chunk_x} and {chunk_y}")
 
-        # # Now verify this matches
-        # if filename not in image_name_to_id:
-        #     logger.warning(f"❌ Skipping chunk: filename '{filename}' not found in mapping")
-        #     continue
-
+        # merging the annotation predictions of all chunk images
         preds = []
         for ann in annotations:
             x1, y1, w, h = ann["bbox"]
-            label = ann["label"]
-            cls_id = category_map[label]
+            cls_id = ann["category_id"]
             preds.append([x1, y1, w, h, cls_id])
 
         all_chunk_preds.append(((chunk_x, chunk_y), preds, 1))
 
-    # ✅ Checking total predictions count
+    # Checking total predictions count
     preds_count = 0
     unique_categories = set()
     for chunk in all_chunk_preds:
@@ -211,7 +274,7 @@ def stitch_chunks_custom(
             unique_categories.add(p[4])
 
     logger.info(f"🔍 Total predictions count: {preds_count}")
-    # logger.info(f"📊 All categories present: {sorted(unique_categories)}")
+
 
     # Merge logic using Union-Find
     cat_img_boxes = defaultdict(lambda: defaultdict(list))
@@ -237,14 +300,13 @@ def stitch_chunks_custom(
             box = [global_x, global_y, global_w, global_h]
             cat_img_boxes[cat_id][image_id].append(box)
 
-    logger.info(f"Toatal Boxes negelected gue to Gloabal merging: {total_boxes_neglected}")
+    logger.info(f"Total Boxes negelected gue to Gloabal merging: {total_boxes_neglected}")
     logger.info(f"cat_img_boxes keys: {list(cat_img_boxes.keys())}")
     for cat_id, image_boxes_dict in cat_img_boxes.items():
         logger.info(f"Category {cat_id}: {[len(v) for v in image_boxes_dict.values()]}")
 
 
-    # Logger Debugging part
-
+    # Logger Debugging part which calculates total number of chairs, tables and other items in the image
     for cat_id, image_boxes_dict in cat_img_boxes.items():  # category_id → image_id → boxes
         for boxes in image_boxes_dict.values():
             count = len(boxes)
@@ -262,16 +324,21 @@ def stitch_chunks_custom(
 
 
 
-    # Group and merge
+    # Create Annotations list in all json formats 
     coco_predictions["annotations"] = []
+    createML_predictions[0]["annotations"] = []
+    
     ann_id = 1
+
+    # Group and merge
     for cat_id, image_boxes_dict in cat_img_boxes.items():
         for image_id, boxes in image_boxes_dict.items():
             n = len(boxes)
             uf = UnionFind(n)
             for i in range(n):
                 for j in range(i + 1, n):
-                    if boxes_intersect_enough(boxes[i], boxes[j], min_overlap=merge_thresh):
+                    # check if the two boxes intersect enough
+                    if boxes_intersect_enough(boxes[i], boxes[j], min_overlap=merge_thresh, comparison_thresh=comparison_thresh, containment_thresh=containment_thresh):
                         uf.union(i, j)
 
             group_dict = defaultdict(list)
@@ -281,18 +348,81 @@ def stitch_chunks_custom(
 
             for group_boxes in group_dict.values():
                 merged_box = merge_boxes(group_boxes)
+
+                # adding coco-annotations
                 coco_predictions["annotations"].append({
                     "id": ann_id,
                     "image_id": image_id,
+                    "category_id": cat_id,
                     "bbox": [round(x, 2) for x in merged_box],
-                    "category_id": cat_id
+                    "area": int(merged_box[2]*merged_box[3]),
+                    "segmentation": [],
+                    "iscrowd": 0
                 })
                 ann_id += 1
 
-    output_json_path = os.path.join(predictions_dir, "stitched_predictions_custom.json")
-    with open(output_json_path, "w") as f:
+                if "createML" in json_formats:
+                    # Extract bounding box values
+                    x_min = round(merged_box[0], 2)
+                    y_min = round(merged_box[1], 2)
+                    width = round(merged_box[2], 2)
+                    height = round(merged_box[3], 2)
+
+                    # Convert to center-based coordinates
+                    center_x = round(x_min + (width / 2), 2)
+                    center_y = round(y_min + (height / 2), 2)
+
+                    # adding createML-annotations
+                    createML_predictions[0]["annotations"].append({
+                        "label": inverse_category_map[cat_id],
+                        "coordinates": {
+                            "x": center_x,
+                            "y": center_y,
+                            "width": width,
+                            "height": height
+                        }
+                    })
+
+
+
+    # Dumping coco-annotations
+    custom_json_dir_coco = os.path.join(session_dir, "COCO", image_name, "Dataset", chunk_pct, overlap, "full_image", "annotated_json_full")
+    os.makedirs(custom_json_dir_coco, exist_ok=True)
+    # logger.info(f"Custom Directory {custom_dir}")
+    output_json_path_coco = os.path.join(custom_json_dir_coco, f"stitched_{chunk_pct}_{overlap}.json")
+    with open(output_json_path_coco, "w") as f:
         json.dump(coco_predictions, f, indent=4)
 
-    draw_predictions_single_image(coco_predictions, image_path, predictions_dir)
+    if "createML" in json_formats:
+        # Dumping createML-annotations
+        custom_json_dir_createML = os.path.join(session_dir, "createML", image_name, "Dataset", chunk_pct, overlap, "full_image", "annotated_json_full")
+        os.makedirs(custom_json_dir_createML, exist_ok=True)
+        # logger.info(f"Custom Directory {custom_dir}")
+        output_json_path_createML = os.path.join(custom_json_dir_createML, f"stitched_{chunk_pct}_{overlap}.json")
+        with open(output_json_path_createML, "w") as f:
+            json.dump(createML_predictions, f, indent=4)
 
+
+
+    # Copying real full image
+    for json_format in json_formats:
+        copy_real_img_dir = os.path.join(session_dir, json_format, image_name, "Dataset", chunk_pct, overlap, "full_image", "images")
+        os.makedirs(copy_real_img_dir, exist_ok=True)
+        # Copy file
+        real_img_dir = os.path.join(copy_real_img_dir, updated_image_name)
+        shutil.copy(image_path, real_img_dir)
+
+
+    # defining custom_dir to save the annotated_full_image
+    custom_img_dir = os.path.join(session_dir, image_name, "Visualize", chunk_pct, overlap, "annotated_full_images")
+    draw_predictions_single_image(coco_predictions, image_path, custom_img_dir)
+
+    # Copying annotated full image
+    for json_format in json_formats:
+        annotated_image_path = os.path.join(custom_img_dir, "annotated_Final_Custom.jpg")
+        copy_annotated_full_image_dir = os.path.join(session_dir, json_format, image_name, "Visualize", chunk_pct, overlap, "annotated_full_image")
+        os.makedirs(copy_annotated_full_image_dir, exist_ok=True)
+        # Copy file
+        annotated_img_dir_coco = os.path.join(copy_annotated_full_image_dir, updated_image_name)
+        shutil.copy(annotated_image_path, copy_annotated_full_image_dir)
     
