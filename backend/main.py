@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# Endpoint to handle only chunking
 @app.post("/only_chunking")
 async def only_chunking(
     files: List[UploadFile] = File(...), config: str = Form(...)
@@ -51,7 +52,7 @@ async def only_chunking(
         return JSONResponse(status_code=500, content="Internal Server Error")
 
 
-
+# Endpoint to handle full implementation
 @app.post("/upload_and_process")
 async def upload_and_process(
     files: List[UploadFile] = File(...), config: str = Form(...)
@@ -88,6 +89,7 @@ async def upload_and_process(
         # Generate results
         session_dir = generate_results(uploads_dir, config_data)
         session_dir = os.path.abspath(uploads_dir)
+        logger.info(f"Session directory: {session_dir}")
         
         return JSONResponse(status_code=200, content={"session_path":session_dir})
 

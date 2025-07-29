@@ -7,7 +7,6 @@ import requests
 import streamlit as st
 from PIL import Image
 from pathlib import Path
-from collections import defaultdict
 
 if 'uploaded_files' not in st.session_state:
     st.session_state.uploaded_files = None
@@ -28,17 +27,15 @@ def load_image(img_path: str) -> Image.Image:
 def list_subfolders(path):
     return sorted([f for f in os.listdir(path) if os.path.isdir(os.path.join(path, f))])
 
-def extract_x_y(filename: str):
+def display_image_pairs(real_paths, annotated_paths, metadata_paths, images_per_page=4):
     """
-    Extract x and y from a filename like 'chunk_x0_y150.jpg'
-    Returns tuple (x, y) as integers
-    """
-    match = re.search(r'_x(\d+)_y(\d+)', Path(filename).stem)
-    if match:
-        return int(match.group(1)), int(match.group(2))
-    return 0, 0  # fallback
+    Display chunked as well as full images sorted by chunk_id, using metadata's chunk_id.
 
-def display_image_pairs(real_paths, annotated_paths, images_per_page=4):
+    Args:
+        image_paths (list[str]): List of chunk image paths.
+        annotated_paths (list[str]): List of annotated image paths.
+        metadata_paths (list[str]): List of metadata paths for chunks.
+    """
     if not real_paths or not annotated_paths:
         st.warning("No images to display.")
         return
@@ -46,12 +43,28 @@ def display_image_pairs(real_paths, annotated_paths, images_per_page=4):
     if len(real_paths) != len(annotated_paths):
         st.warning("Mismatch in number of real and annotated images.")
         return
-    
+
+    # Load metadata: mapping chunk_id -> (x, y)
+    metadata_map = {}
+    for meta_path in metadata_paths:
+        with open(meta_path, "r") as f:
+            data = json.load(f)
+            chunk_id = data["chunk_id"]  # e.g., "chunk_1"
+            metadata_map[chunk_id] = data
+
+    # Sort image pairs by chunk number
+    def extract_chunk_number(path):
+        name = Path(path).stem  # "chunk_1"
+        match = re.search(r"chunk_(\d+)", name)
+        return int(match.group(1)) if match else float('inf')
+
+    paired_images = sorted(zip(real_paths, annotated_paths), key=lambda p: extract_chunk_number(p[0]))
+
     # Initialize session state for pagination
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 0
 
-    total_pages = max(1, (len(real_paths) + images_per_page - 1) // images_per_page)
+    total_pages = max(1, (len(paired_images) + images_per_page - 1) // images_per_page)
 
     # Navigation controls
     col1, col2, col3 = st.columns([1, 10, 1])
@@ -61,54 +74,28 @@ def display_image_pairs(real_paths, annotated_paths, images_per_page=4):
         next = st.button("Next →", disabled=st.session_state.current_page >= total_pages - 1)
 
     if prev:
-        st.session_state.current_page = max(0, st.session_state.current_page - 1)
-
+        st.session_state.current_page -= 1
     if next:
-        st.session_state.current_page = min(total_pages - 1, st.session_state.current_page + 1)
+        st.session_state.current_page += 1
 
     st.caption(f"Page {st.session_state.current_page + 1} of {total_pages}")
 
-    # Calculate indices for current page
+    # Display selected page
     start_idx = st.session_state.current_page * images_per_page
-    end_idx = min((st.session_state.current_page + 1) * images_per_page, len(real_paths))
-    
-    # Ensure we always have at least 1 column
-    num_columns = max(1, end_idx - start_idx)
+    end_idx = min(start_idx + images_per_page, len(paired_images))
 
-    # Horizontal scrolling container
-    st.markdown("""
-    <style>
-        .scrolling-wrapper {
-            overflow-x: auto;
-            display: flex;
-            flex-wrap: nowrap;
-        }
-        .scrolling-wrapper > div {
-            flex: 0 0 auto;
-            margin-right: 20px;
-        }
-    </style>
-    <div class="scrolling-wrapper">
-    """, unsafe_allow_html=True)
-
-    # Create columns for current images
-    cols = st.columns(num_columns)
-
-    # Step 1: Group image paths by their _x value
-    x_groups = defaultdict(list)
-    for path in real_imgs:
-        x_val, y_val = extract_x_y(path)
-        x_groups[x_val].append((y_val, path))
-
-    fixed_width = 300  # or whatever size you prefer (e.g. 250, 400, etc.)
-    for i, idx in enumerate(range(start_idx, end_idx)):
+    cols = st.columns(end_idx - start_idx)
+    for i, (real_img, ann_img) in enumerate(paired_images[start_idx:end_idx]):
         with cols[i]:
-            cur_real_path = real_paths[idx]
-            x_val, y_val = extract_x_y(cur_real_path)
-            st.image(load_image(cur_real_path), caption=f"x={x_val}_y={y_val}", width = fixed_width)
-            st.image(load_image(annotated_paths[idx]), caption=f"x={x_val}_y={y_val}", width = fixed_width)
+            chunk_name = Path(real_img).stem  # "chunk_1"
+            meta = metadata_map.get(chunk_name, {})
+            x = meta.get("x", "?")
+            y = meta.get("y", "?")
+            st.image(load_image(real_img), caption=f"Real (x={x}, y={y})", use_container_width=True)
+            st.image(load_image(ann_img), caption=f"Annotated (x={x}, y={y})", use_container_width=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
@@ -370,31 +357,24 @@ if st.session_state.processed and st.session_state.session_dir:
         if f.endswith(".jpg") or f.endswith(".png")
     ])
 
+    metadata_paths = sorted([
+        os.path.join(real_dir, f)
+        for f in os.listdir(real_dir)
+        if f.endswith(".json")
+    ])
+
     annotated_imgs = sorted([
         os.path.join(annotated_dir, f)
         for f in os.listdir(annotated_dir)
         if f.endswith(".jpg") or f.endswith(".png")
     ])
 
-    # first sort the filenames by _y and then sort it by _x on the updated image list -> this makes sure that the image chunks are visualized horizonttally first 
-    # Step 1: Zip real and annotated images
-    paired_images = list(zip(real_imgs, annotated_imgs))
-    # Step 2: Sort the pairs based on Y first, then X from real image filename
-    sorted_pairs = sorted(
-        paired_images,
-        key=lambda pair: (extract_x_y(os.path.basename(pair[0]))[1],  # Y value
-                        extract_x_y(os.path.basename(pair[0]))[0])  # X value
-    )
-    # Step 3: Unzip back into separate lists
-    real_imgs, annotated_imgs = zip(*sorted_pairs)
-    real_imgs, annotated_imgs = list(real_imgs), list(annotated_imgs)  # Convert tuples back to lists
-
 
     if not real_imgs or not annotated_imgs:
         st.warning(f"Images not present in the designated Real and annotated chunked path")
 
 
-    display_image_pairs(real_imgs, annotated_imgs)
+    display_image_pairs(real_imgs, annotated_imgs, metadata_paths)
 
     # Step 2: Full image pair
     st.markdown("---")

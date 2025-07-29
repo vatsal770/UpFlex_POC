@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import logging
 from typing import Any, Dict
 
@@ -28,16 +27,6 @@ def load_image(img_path: str) -> Image.Image:
 def list_subfolders(path):
     return sorted([f for f in os.listdir(path) if os.path.isdir(os.path.join(path, f))])
 
-def extract_x_y(filename: str):
-    """
-    Extract x and y from a filename like 'chunk_x0_y150.jpg'
-    Returns tuple (x, y) as integers
-    """
-    match = re.search(r'_x(\d+)_y(\d+)', Path(filename).stem)
-    if match:
-        return int(match.group(1)), int(match.group(2))
-    return 0, 0  # fallback
-
 
 def display_chunks(image_paths, chunks_metadata, max_rows=7, max_cols=7):
     """
@@ -51,18 +40,17 @@ def display_chunks(image_paths, chunks_metadata, max_rows=7, max_cols=7):
         st.warning("No images to display.")
         return
 
-    # Step 1: Map chunk_id to metadata
+    # Step 1: Map chunk_id to metadata. chunk_id = f"chunk_{chunk_id}""
     meta_map = {meta["chunk_id"]: meta for meta in chunks_metadata}
-
     # Step 2: Group images by x-coordinate using metadata
     x_groups = defaultdict(list)
     for path in image_paths:
-        chunk_id = os.path.basename(path)
+        chunk_id = Path(path).stem
 
         metadata = meta_map.get(chunk_id)
         if not metadata:
-            logger.info(f"metadata not found for {chunk_id}")
-            break
+            st.warning(f"metadata not found for {chunk_id}")
+            break  # Changed from break to continue to skip invalid entries
 
         x_val = metadata["x"]
         y_val = metadata["y"]
@@ -74,15 +62,22 @@ def display_chunks(image_paths, chunks_metadata, max_rows=7, max_cols=7):
     for x in sorted_x_vals:
         x_groups[x] = sorted(x_groups[x], key=lambda tup: tup[0])[:max_rows]
 
-    # Step 4: Display columns
+    logger.info(f"Length of sorted_x_vals: {len(sorted_x_vals)}")
+
+    # Step 4: Display columns - with check for empty case
     st.markdown("### 🧩 Chunked Images (Grouped by X)")
+    
+    if not sorted_x_vals:
+        st.warning("No valid image groups found.")
+        return
+    
     cols = st.columns(len(sorted_x_vals))
 
     for col_idx, x in enumerate(sorted_x_vals):
         with cols[col_idx]:
             st.markdown(f"**x = {x}**")
             for y_val, img_path in x_groups[x]:
-                st.image(load_image(img_path), caption=f"y = {y_val}", use_container_width=True)
+                st.image(load_image(img_path), caption=f"y = {y_val}", use_container_width=True)  # Changed to use_column_width
 
 
 st.set_page_config(page_title="Chunking Viewer", layout="wide")
