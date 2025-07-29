@@ -42,6 +42,7 @@ async def only_chunking(
         # Call only chunking logic
         session_dir = generate_chunks(uploads_dir, config_data)
         session_dir = os.path.abspath(uploads_dir)
+        logger.info(f"Session directory: {session_dir}")
 
         return JSONResponse(status_code=200, content={"session_path": session_dir})
     

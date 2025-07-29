@@ -1,39 +1,62 @@
 import os
 import json
-import re
 import logging 
 import cv2
 import shutil
 
 from pathlib import Path
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def boxes_intersect_enough(box1, box2, min_overlap=15, comparison_thresh=5, containment_thresh=2):
+def boxes_intersect_enough(
+    box1: List[int],
+    box2: List[int],
+    min_overlap: int = 15,
+    comparison_thresh: int = 5,
+    containment_thresh: int = 2
+) -> bool:
+    """
+    Determine whether two bounding boxes intersect sufficiently or if one is contained within the other.
+
+    Args:
+        box1: The first box in [x, y, w, h] format.
+        box2: The second box in [x, y, w, h] format.
+        min_overlap: Minimum required overlap in either axis to consider intersection.
+        comparison_thresh: Max difference to allow in min/max edge comparisons to neglect false matches.
+        containment_thresh: Tolerance value to determine if one box is completely contained within another.
+
+    Returns:
+        True if boxes overlap enough or one is contained in the other, otherwise False.
+    """
+    # Extract coordinates
     x1_min, y1_min, w1, h1 = box1
     x1_max, y1_max = x1_min + w1, y1_min + h1
+
     x2_min, y2_min, w2, h2 = box2
     x2_max, y2_max = x2_min + w2, y2_min + h2
 
+    # Calculate overlapping area
     x_overlap = max(0, min(x1_max, x2_max) - max(x1_min, x2_min))
     y_overlap = max(0, min(y1_max, y2_max) - max(y1_min, y2_min))
 
+    # Ensure true 2D overlap (not false intersections)
     if x_overlap > 0 and y_overlap == 0:
         x_overlap = 0
     if y_overlap > 0 and x_overlap == 0:
         y_overlap = 0
 
+    # Check for false merging cases (eg- x_overlap<merge_threshold , y_overlap)
     if abs(y2_max - y1_max) <= comparison_thresh and abs(y2_min - y1_min) <= comparison_thresh:
         y_overlap = 0
     elif abs(x2_max - x1_max) <= comparison_thresh and abs(x2_min - x1_min) <= comparison_thresh:
         x_overlap = 0
 
-    # Containment logic: is box1 inside box2 or vice versa?
-    def is_contained(inner, outer, tol):
+    def is_contained(inner: List[int], outer: List[int], tol: int) -> bool:
+        """Check if inner box is completely contained in outer box with tolerance."""
         ix_min, iy_min, iw, ih = inner
         ix_max, iy_max = ix_min + iw, iy_min + ih
 
@@ -46,35 +69,52 @@ def boxes_intersect_enough(box1, box2, min_overlap=15, comparison_thresh=5, cont
             ix_max <= ox_max + tol and
             iy_max <= oy_max + tol
         )
-
     containment = is_contained(box1, box2, containment_thresh) or is_contained(box2, box1, containment_thresh)
 
-    # Return True if enough overlap OR one box is inside the other
     return (x_overlap >= min_overlap or y_overlap >= min_overlap) or containment
 
 
-def merge_boxes(boxes):
+def merge_boxes(boxes: List[List[int]]) -> List[int]:
+    """
+    Merge multiple bounding boxes into one box that tightly encloses all of them.
+
+    Args:
+        boxes: A list of boxes, each in [x, y, w, h] format.
+
+    Returns:
+        A single merged box in [x, y, w, h] format.
+    """
     x_min = min(b[0] for b in boxes)
     y_min = min(b[1] for b in boxes)
     x_max = max(b[0] + b[2] for b in boxes)
     y_max = max(b[1] + b[3] for b in boxes)
+
     return [x_min, y_min, x_max - x_min, y_max - y_min]
 
+
 class UnionFind:
-    def __init__(self, n):
+    """
+    Disjoint Set Union (Union-Find) data structure to efficiently group overlapping boxes.
+    """
+    def __init__(self, n: int):
+        # Initially, each element is its own parent
         self.parent = list(range(n))
-    def find(self, u):
+
+    def find(self, u: int) -> int:
+        # Path compression for optimization
         if self.parent[u] != u:
             self.parent[u] = self.find(self.parent[u])
         return self.parent[u]
-    def union(self, u, v):
+
+    def union(self, u: int, v: int) -> None:
+        # Union the sets containing u and v
         pu, pv = self.find(u), self.find(v)
         if pu != pv:
             self.parent[pu] = pv
 
 
 
-def get_color_for_class(class_id):
+def get_color_for_class(class_id: int) -> Tuple[int, int, int]:
     """Assign fixed RGB colors per class_id."""
     color_map = {
         100: (0, 0, 255),    # Red (chair)
@@ -84,7 +124,7 @@ def get_color_for_class(class_id):
     return color_map.get(class_id, (128, 128, 128))  # Gray fallback
 
 
-def draw_predictions_single_image(coco, image_path, output_dir):
+def draw_predictions_single_image(coco: dict, image_path: str, output_dir: str):
     """
     Draw predictions from COCO-style annotations on a single image with image_id=1.
 
@@ -141,15 +181,25 @@ def stitch_chunks_custom(
     containment_thresh = 2,
 ):
     """
-    Custom stitching logic using proximity-based union of boxes.
-    """
+    Custom stitching logic using proximity-based union of bounding boxes.
 
-    category_map = {
-        "chair": 100,
-        "table": 101,
-        "table-chair": 103    
-        }
+    Parameters:
+        session_dir (str): Path to the session directory where stitched results will be saved.
+        predictions_dir (List[str]): List of paths to per-chunk prediction JSON files.
+        image_path (str): Path to the original full image (used for reconstructing global coordinates).
+        json_formats (List[str]): Output annotation formats to generate (e.g., "COCO", "createML").
+        merge_thresh (int): Minimum overlap in pixels required to consider boxes for merging.
+        comparison_thresh (int): Tolerance in pixel distance used to neglect false mergings.
+        containment_thresh (int): Tolerance for determining whether one box is contained within another.
+
+    Functionality:
+        - Aggregates all predictions from chunk-level JSON files.
+        - Converts all chunk-local bounding boxes to global image coordinates.
+        - Groups and merges overlapping or closely located boxes using a Union-Find data structure.
+        - Writes final merged predictions in the selected formats into the session directory.
+    """
     
+    # inverse category matching with labels and class_id
     inverse_category_map = {
         100: "chair",
         101: "table",
@@ -157,7 +207,7 @@ def stitch_chunks_custom(
     }
     
     parts = os.path.normpath(predictions_dir).split(os.sep)
-    chunk_pct, overlap = parts[-4], parts[-3]
+    chunk_pct, overlap = parts[-4], parts[-3]    # extract chunk_size and overlap size from predictions_dir
 
     image_name = (Path(image_path)).stem
 
@@ -228,6 +278,22 @@ def stitch_chunks_custom(
 
     logger.info("Prediction directory: %s", predictions_dir)
 
+    metadata_dir = predictions_dir.replace("annotated_json_chunks", "images")
+    logger.info(f"metadata directory: {metadata_dir}")
+    # Load all metadata into a lookup dict {chunk_filename: (x, y)}
+    filename_to_xy = {}
+    for file in os.listdir(metadata_dir):
+        if not file.endswith(".json"):
+            continue
+        metadata_path = os.path.join(metadata_dir, file)
+        with open(metadata_path, "r") as f:
+            metadata = json.load(f)
+            filename = metadata.get("chunk_id")  # This should match with chunk_data["images"][0]["file_name"]
+            x = metadata.get("x")
+            y = metadata.get("y")
+            if filename and x is not None and y is not None:
+                filename_to_xy[filename] = (x, y)
+
     # Load chunk predictions
     all_chunk_preds = []
     for file in os.listdir(predictions_dir):
@@ -241,19 +307,22 @@ def stitch_chunks_custom(
         # extracting the filename of the chunks
         chunk_image = chunk_data["images"][0]
         filename = chunk_image["file_name"]    # Extract filename
+        base_name = os.path.splitext(file)[0]
 
         annotations = chunk_data["annotations"]
 
-        # extracting the start coordinates of the chunk image from the filename
-        match = re.search(r"_x(\d+)_y(\d+)\.jpg", filename)
-        if not match:
-            logger.info("Match not Found while tracing back the Chunk image!!!!!!")
-            continue
+        # # extracting the start coordinates of the chunk image from the image_metadata
+        # match = re.search(r"_x(\d+)_y(\d+)\.jpg", filename)
+        # if not match:
+        #     logger.info("Match not Found while tracing back the Chunk image!!!!!!")
+        #     continue
 
-        chunk_x = int(match.group(1))
-        chunk_y = int(match.group(2))
+        # chunk_x = int(match.group(1))
+        # chunk_y = int(match.group(2))
 
-        # logger.info(f"{chunk_x} and {chunk_y}")
+        chunk_x, chunk_y = filename_to_xy[base_name]
+
+        logger.info(f"{chunk_x} and {chunk_y}")
 
         # merging the annotation predictions of all chunk images
         preds = []

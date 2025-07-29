@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import logging
 from typing import Any, Dict
 
 import requests
@@ -8,6 +9,9 @@ import streamlit as st
 from PIL import Image
 from pathlib import Path
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # create session_states for parameters that needs to be preserved throughout the session
 if 'uploaded_files' not in st.session_state:
@@ -34,39 +38,51 @@ def extract_x_y(filename: str):
         return int(match.group(1)), int(match.group(2))
     return 0, 0  # fallback
 
-def display_chunks(image_paths, max_rows=7, max_cols=7):
+
+def display_chunks(image_paths, chunks_metadata, max_rows=7, max_cols=7):
     """
-    
+    Display chunked images grouped by x, sorted by y, using metadata's chunk_id.
+
+    Args:
+        image_paths (list[str]): List of chunk image paths.
+        chunks_metadata (list[str]): List of metadata dicts for chunks.
     """
     if not image_paths:
         st.warning("No images to display.")
         return
 
-    # Step 1: Group image paths by their _x value
+    # Step 1: Map chunk_id to metadata
+    meta_map = {meta["chunk_id"]: meta for meta in chunks_metadata}
+
+    # Step 2: Group images by x-coordinate using metadata
     x_groups = defaultdict(list)
     for path in image_paths:
-        x_val, y_val = extract_x_y(path)
+        chunk_id = os.path.basename(path)
+
+        metadata = meta_map.get(chunk_id)
+        if not metadata:
+            logger.info(f"metadata not found for {chunk_id}")
+            break
+
+        x_val = metadata["x"]
+        y_val = metadata["y"]
+
         x_groups[x_val].append((y_val, path))
 
-    # Step 2: Sort x keys and within each x-group, sort by y
-    sorted_x_vals = sorted(x_groups.keys())
-    # Limit columns to max_cols
-    sorted_x_vals = sorted_x_vals[:max_cols]
-
+    # Step 3: Sort x keys and their groups by y
+    sorted_x_vals = sorted(x_groups.keys())[:max_cols]
     for x in sorted_x_vals:
-        x_groups[x] = sorted(x_groups[x], key=lambda tup: tup[0])  # sort by y
-        # Limit rows to max_rows
-        x_groups[x] = x_groups[x][:max_rows]
+        x_groups[x] = sorted(x_groups[x], key=lambda tup: tup[0])[:max_rows]
 
-    # Step 3: Create columns for each _x group
-    st.markdown("### 🧩 Chunked Images")
+    # Step 4: Display columns
+    st.markdown("### 🧩 Chunked Images (Grouped by X)")
     cols = st.columns(len(sorted_x_vals))
 
     for col_idx, x in enumerate(sorted_x_vals):
         with cols[col_idx]:
             st.markdown(f"**x = {x}**")
             for y_val, img_path in x_groups[x]:
-                st.image(load_image(img_path), caption=f"y={y_val}", use_container_width=True)
+                st.image(load_image(img_path), caption=f"y = {y_val}", use_container_width=True)
 
 
 st.set_page_config(page_title="Chunking Viewer", layout="wide")
@@ -220,7 +236,20 @@ if st.session_state.processed_chunks and st.session_state.session_dir_chunks:
         if f.endswith(".jpg") or f.endswith(".png")
     ]
 
-    display_chunks(real_imgs)
+    chunks_metadata = [
+        os.path.join(real_dir, f)
+        for f in os.listdir(real_dir)
+        if f.endswith(".json")
+    ]
+
+    # Load JSON metadata files into a list of dicts
+    loaded_chunks_metadata = []
+    for meta_path in chunks_metadata:
+        with open(meta_path, "r") as f:
+            metadata = json.load(f)
+            loaded_chunks_metadata.append(metadata)
+
+    display_chunks(real_imgs, loaded_chunks_metadata)
 
     
 else:

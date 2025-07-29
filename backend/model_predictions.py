@@ -22,7 +22,33 @@ def run_model_predictions_on_chunks(
         allowed_classes: List[str], 
         json_formats: List[str]
 ) -> str:
+    
+    """
+    Run object detection model predictions on all chunked images for a given full image.
 
+    Parameters:
+        session_dir (str): Path to the current session directory where all output will be stored.
+        overlap_dir (str): Path to the chunk images directory (containing overlap-specific chunks).
+        image_dir (str): Path to the original full-sized input image (used for reference).
+        full_image_name (str): Filename of the original input image, used to name and organize outputs.
+        model_id (str): ID of the deployed model to be used for prediction.
+        api_key (str): API key to authenticate and access the model service.
+        allowed_classes (List[str]): List of class names that should be retained in the final predictions.
+        json_formats (List[str]): List of output annotation formats to be generated (e.g., "COCO", "createML").
+
+    Returns:
+        str: Path to the directory where model predictions and converted annotation files were saved.
+
+    Functionality:
+        - Iterates over all chunked images in the `overlap_dir`.
+        - Sends each chunked image to the specified object detection model using the `model_id` and `api_key`.
+        - Filters the model's predictions based on the `allowed_classes`.
+        - Saves raw prediction results in JSON format.
+        - Converts predictions to selected formats (COCO, createML, etc.) and saves them under the session directory.
+        - Returns the output directory path containing predictions and annotations for downstream processing.
+    """
+
+    # category map matching labels and class_ids
     category_map = {
         "chair": 100,
         "table": 101,
@@ -32,8 +58,9 @@ def run_model_predictions_on_chunks(
     # Initialize the prediction model
     model = get_model(model_id, api_key)
 
-    logger.info(f"Allowed Classes are: {allowed_classes}")
+    logger.info(f"Allowed Classes are: {allowed_classes}")   # logging allowed classes
 
+    # model predictions for each chunked image
     for image_file in os.listdir(image_dir):
         if not image_file.lower().endswith((".jpg", ".jpeg", ".png")):
             continue
@@ -45,6 +72,9 @@ def run_model_predictions_on_chunks(
         # logger.info(f"image path {image_path}")
 
         image_name = os.path.basename(image_path)
+        stem_name = Path(image_path).stem
+
+        metadata_path = f"{image_dir}/{stem_name}.json"
         # Load the image
         image = cv2.imread(image_path)
         if image is None:
@@ -140,9 +170,11 @@ def run_model_predictions_on_chunks(
                 else str(class_id_model)
             )
 
+            # checking for the allowed labels
             if label not in allowed_classes:
                 continue
 
+            # mapping the labels back to class_ids
             cls_id = category_map[label]
 
             # adding coco-annotations
@@ -221,6 +253,7 @@ def run_model_predictions_on_chunks(
             os.makedirs(copy_chunks_img_dir, exist_ok=True)
             # Copy image
             shutil.copy(image_path, copy_chunks_img_dir)
+            shutil.copy(metadata_path, copy_chunks_img_dir)
 
 
     logger.info(f"model_predictions completed successfully!!!!!!!!!!!!!!!!!")
