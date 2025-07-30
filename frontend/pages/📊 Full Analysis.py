@@ -8,6 +8,8 @@ import streamlit as st
 from PIL import Image
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 if 'uploaded_files' not in st.session_state:
     st.session_state.uploaded_files = None
 if "json_formats" not in st.session_state:
@@ -19,6 +21,14 @@ if 'session_dir' not in st.session_state:
 if 'stiching_type' not in st.session_state:
     st.session_state.stiching_type = None
 
+# loading the API key from environment variables
+try:
+    load_dotenv()
+    API_KEY = os.getenv("api_key")
+    if not API_KEY:
+        st.warning("api_key not found in environment variables.")
+except Exception as e:
+    st.error("Failed to load environment variables: %s", str(e))
 
 
 def load_image(img_path: str) -> Image.Image:
@@ -36,6 +46,8 @@ def display_image_pairs(real_paths, annotated_paths, metadata_paths, images_per_
         annotated_paths (list[str]): List of annotated image paths.
         metadata_paths (list[str]): List of metadata paths for chunks.
     """
+
+    
     if not real_paths or not annotated_paths:
         st.warning("No images to display.")
         return
@@ -130,7 +142,7 @@ with st.sidebar:
     with col2:
         api_key = st.selectbox(
             "API KEY",
-            options=["LLDV1nzXicfTYmlj9CMp"],
+            options=[API_KEY],
             accept_new_options=True,
             index=0,  # default selection
         )

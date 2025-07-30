@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 from pathlib import Path
 from Custom import stitch_chunks_custom     # import stitch_chunks_custom from Custom.py
 from model_predictions import run_model_predictions_on_chunks       # import run_model_predictions from model_predictions.py
-from zip import zip_folder
+from zip import zip_folder      # import zip_folder from zip.py
 
 # Configure logging once for all modules
 logger = logging.getLogger("chunking-1")
@@ -439,9 +439,9 @@ def generate_results(session_dir: str, config_data: Dict[str, Any]) -> str:
                     chunk_height,
                     overlap_pct,
                     overlap_pct + 1,
-                    base_name,
                     img_w,
                     img_h,
+                    base_name,
                     image,
                 )
 
