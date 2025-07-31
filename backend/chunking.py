@@ -96,6 +96,12 @@ def chunk_fixed_ovp_pct(
                     json.dump(metadata, f, indent=4)
                 chunk_id += 1
 
+                if chunk_end_x == img_w:
+                    break    # if chunk_end_x is equal to img_w, then we break the loop
+
+            if chunk_end_y == img_h:
+                break    # if chunk_end_y is equal to img_h, then we break the loop
+
 
 def chunk_fixed_ovp_data_px(
     overlap_type: str,
@@ -153,6 +159,12 @@ def chunk_fixed_ovp_data_px(
             with open(chunk_metadata, "w") as f:     # dump chunk metadata
                 json.dump(metadata, f, indent=4)
             chunk_id += 1
+
+            if chunk_end_x == img_w:
+                break    # if chunk_end_x is equal to img_w, then we break the loop
+
+        if chunk_end_y == img_h:
+            break    # if chunk_end_y is equal to img_h, then we break the loop
 
 def chunk_pct_ovp_data_px(
     overlap_type: str,
@@ -213,6 +225,12 @@ def chunk_pct_ovp_data_px(
                 with open(chunk_metadata, "w") as f:     # dump chunk metadata 
                     json.dump(metadata, f, indent=4)
                 chunk_id += 1
+
+                if chunk_end_x == img_w:
+                    break    # if chunk_end_x is equal to img_w, then we break the loop
+
+            if chunk_end_y == img_h:
+                break    # if chunk_end_y is equal to img_h, then we break the loop
 
 
 def chunk_pct_ovp_pct(
@@ -278,6 +296,12 @@ def chunk_pct_ovp_pct(
                     with open(chunk_metadata, "w") as f:    # dump chunk metadata
                         json.dump(metadata, f, indent=4)
                     chunk_id += 1
+
+                    if chunk_end_x == img_w:
+                        break    # if chunk_end_x is equal to img_w, then we break the loop
+
+                if chunk_end_y == img_h:
+                    break    # if chunk_end_y is equal to img_h, then we break the loop
 
 
 def generate_results(session_dir: str, config_data: Dict[str, Any]) -> str:
