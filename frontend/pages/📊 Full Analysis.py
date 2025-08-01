@@ -343,8 +343,8 @@ if st.session_state.processed and st.session_state.session_dir:
 
     image_name = Path(selected_image).stem
     # path to annotated images directory, and getting list of all chunk_sizes and overlap_sizes
-    annotated_root = os.path.join(st.session_state.session_dir, image_name, "Visualize")
-    dataset_root = os.path.join(st.session_state.session_dir, image_name, "Dataset", "Base_chunks")
+    annotated_root = os.path.join(st.session_state.session_dir, "COCO", image_name, "Visualize")
+    dataset_root = os.path.join(st.session_state.session_dir, "COCO", image_name, "Dataset")
 
     pct_sizes = list_subfolders(annotated_root)
     selected_pct = st.selectbox("Select Chunk Percentage", pct_sizes)
@@ -393,7 +393,7 @@ if st.session_state.processed and st.session_state.session_dir:
     st.markdown("## 🖼 Full Image + Annotation")
 
     if st.session_state.stiching_type == "custom":
-        full_annotations_dir = os.path.join(overlap_dir, "annotated_full_images")
+        full_annotations_dir = os.path.join(overlap_dir, "annotated_full_image")
 
 
     real_full = None

@@ -4,7 +4,10 @@ import os
 from typing import List
 import shutil
 
-from chunking import generate_results
+from chunking import generate_chunks_1
+from predictions_for_all_images import run_predictions_for_all_images
+from stitch_all_images import run_stitch_for_all_images
+from zip_all_formats import run_zip_all_formats
 from only_chunking import generate_chunks
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
@@ -86,8 +89,12 @@ async def upload_and_process(
         with open(config_path, "w") as f:
             json.dump(config_data, f, indent=2)
 
-        # Generate results
-        session_dir = generate_results(uploads_dir, config_data)
+        # Generate results with a proper pipeline
+        session_dir = generate_chunks_1(uploads_dir, config_data)
+        run_predictions_for_all_images(uploads_dir, config_data)
+        run_stitch_for_all_images(uploads_dir, config_data)
+        run_zip_all_formats(uploads_dir, config_data)
+        
         session_dir = os.path.abspath(uploads_dir)
         logger.info(f"Session directory: {session_dir}")
         
@@ -95,5 +102,5 @@ async def upload_and_process(
 
 
     except Exception as e:
-        logger.error("Error processinf files: %s", str(e))
+        logger.error("Error processing files: %s", str(e))
         return JSONResponse(status_code=500, content="Internal Server Error")
