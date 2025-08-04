@@ -1,20 +1,22 @@
+# Python version
+# Requires Python 3.12.3
+
 # --- FastAPI Backend ---
-fastapi==0.110.1
-uvicorn==0.27.1
+fastapi==0.110.3
+uvicorn==0.34.3
 
 # --- Streamlit Frontend ---
-streamlit==1.34.0
+streamlit==1.45.1
 
 # --- Inference & ML ---
-inference==0.7.2  # Roboflow's inference SDK
-torch>=2.0.0  # Required if our inference model uses PyTorch
+inference==0.51.1  # Roboflow's inference SDK
+torch==2.7.1  # Required if our inference model uses PyTorch
 
 # --- Image & Annotation ---
-opencv-python-headless==4.9.0.80  # headless avoids GUI conflict
-Pillow==10.3.0
-supervision==0.16.0
+opencv-python-headless==4.10.0.84 # headless avoids GUI conflict
+pillow==11.2.1
+supervision==0.25.1
 
 # --- Utilities ---
-requests==2.31.0
-tqdm==4.66.4  # Optional for tracking model's progress
-
+requests==2.32.3
+tqdm==4.67.1  # Optional for tracking model's progress
