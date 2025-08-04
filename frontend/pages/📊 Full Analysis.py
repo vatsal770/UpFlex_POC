@@ -76,7 +76,7 @@ def display_image_pairs(real_paths, annotated_paths, metadata_paths, images_per_
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 0
 
-    total_pages = max(1, (len(paired_images) + images_per_page - 1) // images_per_page)
+    total_pages = max(1, (len(real_paths) + images_per_page - 1) // images_per_page)
 
     # Navigation controls
     col1, col2, col3 = st.columns([1, 10, 1])
@@ -86,25 +86,48 @@ def display_image_pairs(real_paths, annotated_paths, metadata_paths, images_per_
         next = st.button("Next →", disabled=st.session_state.current_page >= total_pages - 1)
 
     if prev:
-        st.session_state.current_page -= 1
+        st.session_state.current_page = max(0, st.session_state.current_page - 1)
+
     if next:
-        st.session_state.current_page += 1
+        st.session_state.current_page = min(total_pages - 1, st.session_state.current_page + 1)
 
     st.caption(f"Page {st.session_state.current_page + 1} of {total_pages}")
 
-    # Display selected page
+    # Calculate indices for current page
     start_idx = st.session_state.current_page * images_per_page
-    end_idx = min(start_idx + images_per_page, len(paired_images))
+    end_idx = min((st.session_state.current_page + 1) * images_per_page, len(real_paths))
+    
+    # Ensure we always have at least 1 column
+    num_columns = max(1, end_idx - start_idx)
 
-    cols = st.columns(end_idx - start_idx)
+    # Horizontal scrolling container
+    st.markdown("""
+    <style>
+        .scrolling-wrapper {
+            overflow-x: auto;
+            display: flex;
+            flex-wrap: nowrap;
+        }
+        .scrolling-wrapper > div {
+            flex: 0 0 auto;
+            margin-right: 20px;
+        }
+    </style>
+    <div class="scrolling-wrapper">
+    """, unsafe_allow_html=True)
+
+    # Create columns for current images
+    cols = st.columns(num_columns)
+
+    fixed_width = 300  # or whatever size you prefer (e.g. 250, 400, etc.)
     for i, (real_img, ann_img) in enumerate(paired_images[start_idx:end_idx]):
         with cols[i]:
             chunk_name = Path(real_img).stem  # "chunk_1"
             meta = metadata_map.get(chunk_name, {})
             x = meta.get("x", "?")
             y = meta.get("y", "?")
-            st.image(load_image(real_img), caption=f"Real (x={x}, y={y})", use_container_width=True)
-            st.image(load_image(ann_img), caption=f"Annotated (x={x}, y={y})", use_container_width=True)
+            st.image(load_image(real_img), caption=f"Real (x={x}, y={y})", width=fixed_width)
+            st.image(load_image(ann_img), caption=f"Annotated (x={x}, y={y})", width=fixed_width)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
