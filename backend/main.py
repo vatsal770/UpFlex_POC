@@ -4,17 +4,23 @@ import os
 from typing import List
 import shutil
 
-from chunking import generate_chunks_1
-from predictions_for_all_images import run_predictions_for_all_images
-from stitch_all_images import run_stitch_for_all_images
-from zip_all_formats import run_zip_all_formats
-from only_chunking import generate_chunks
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
-logging.basicConfig(level=logging.INFO)
+from chunking import ChunkProcessor
+from pipeline import ProcessingPipeline
+
+
+# Configure logging once for all modules
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+    handlers=[logging.StreamHandler()]
+)
 logger = logging.getLogger(__name__)
 
+
+# Create FastAPI app instance
 app = FastAPI()
 
 # Endpoint to handle only chunking
@@ -38,13 +44,28 @@ async def only_chunking(
             with open(os.path.join(image_dir, file_name), "wb") as f:
                 f.write(await file.read())
 
-        config_data = json.loads(config)
-        config_path = os.path.join(uploads_dir, "config.json")
+        # Save configurations sent by the user
+        try:
+            config_data = json.loads(config)
+        except json.JSONDecodeError as e:
+            logger.error("Invalid config JSON: %s", e)
+            return JSONResponse(status_code=400, content="Invalid configuration JSON")
+        
+        config_path = os.path.join(uploads_dir, "config.json")  # defining config file path
         with open(config_path, "w") as f:
             json.dump(config_data, f, indent=2)
 
+        # Extract chunking configurations
+        chunking_type = config_data.get("chunking", {}).get("type", "")
+        chunk_params = config_data.get("chunking", {}).get("params", "")
+
+        # Overlap configurations
+        overlap_type = config_data.get("overlap", {}).get("type", "")
+        overlap_params = config_data.get("overlap", {}).get("params", {})
+
         # Call only chunking logic
-        session_dir = generate_chunks(uploads_dir, config_data)
+        chunk_processor = ChunkProcessor(uploads_dir, chunking_type, chunk_params, overlap_type, overlap_params)
+        chunk_processor.generate_chunks()
         session_dir = os.path.abspath(uploads_dir)
         logger.info(f"Session directory: {session_dir}")
 
@@ -84,21 +105,45 @@ async def upload_and_process(
                 f.write(await file.read())
 
         # Save configurations sent by the user.
-        config_data = json.loads(config)
-        config_path = os.path.join(uploads_dir, "config.json")
+        try:
+            config_data = json.loads(config)
+        except json.JSONDecodeError as e:
+            logger.error("Invalid config JSON: %s", e)
+            return JSONResponse(status_code=400, content="Invalid configuration JSON")
+
+        config_path = os.path.join(uploads_dir, "config.json")  # defining config file pathz
         with open(config_path, "w") as f:
             json.dump(config_data, f, indent=2)
 
-        # Generate results with a proper pipeline
-        session_dir = generate_chunks_1(uploads_dir, config_data)
-        run_predictions_for_all_images(uploads_dir, config_data)
-        run_stitch_for_all_images(uploads_dir, config_data)
-        run_zip_all_formats(uploads_dir, config_data)
+        # extracting model_id, api_key, json_formats, selected_classes from the config file
+        model_id = config_data["model_id"]["params"]["model_selected"]
+        api_key = config_data["api_key"]["params"]["api_selected"]
+        json_formats = config_data["json_formats"]["params"]["formats_selected"]
+        selected_classes = config_data["allowed_classes"]["params"]["selected"]
+
+        # Extract chunking configurations
+        chunking_type = config_data.get("chunking", {}).get("type", "")
+        chunk_params = config_data.get("chunking", {}).get("params", "")
+
+        # Overlap configurations
+        overlap_type = config_data.get("overlap", {}).get("type", "")
+        overlap_params = config_data.get("overlap", {}).get("params", {})
+
+        # Stitching configurations
+        stitching_type = config_data.get("stitching", {}).get("type", "")
+        stitching_params = config_data.get("stitching", {}).get("params", {})
+
+        # Generate results from the created pipeline
+        pipeline = ProcessingPipeline(uploads_dir, model_id, api_key, selected_classes, json_formats, chunking_type, chunk_params, overlap_type, overlap_params, stitching_type, stitching_params)
+        pipeline.run_chunking_for_all_images()
+        pipeline.run_predictions_for_all_images()
+        pipeline.run_stitch_for_all_images()
+        pipeline.run_zip_all_formats()
         
         session_dir = os.path.abspath(uploads_dir)
         logger.info(f"Session directory: {session_dir}")
         
-        return JSONResponse(status_code=200, content={"session_path":session_dir})
+        return JSONResponse(status_code=200, content={"session_path": session_dir})
 
 
     except Exception as e:

@@ -9,13 +9,18 @@ from pathlib import Path
 from typing import List
 from inference import get_model
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging once for all modules
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+    handlers=[logging.StreamHandler()]
+)
 logger = logging.getLogger(__name__)
 
 
 # Define a class to handle model predictions
 class ModelPredictor:
-    def __init__(self, session_dir: str, model_id: str, api_key: str, allowed_classes: List[str], json_formats: List[str]):
+    def __init__(self, session_dir: str, model_id: str, api_key: str, allowed_classes: List[str], json_formats: List[str]) -> None:
         self.session_dir = session_dir
         self.model_id = model_id
         self.api_key = api_key
@@ -33,14 +38,9 @@ class ModelPredictor:
         Run object detection model predictions on all chunked images for a given full image.
 
         Parameters:
-            session_dir (str): Path to the current session directory where all output will be stored.
             overlap_dir (str): Path to the chunk images directory (containing overlap-specific chunks).
             image_dir (str): Path to the original full-sized input image (used for reference).
             full_image_name (str): Filename of the original input image, used to name and organize outputs.
-            model_id (str): ID of the deployed model to be used for prediction.
-            api_key (str): API key to authenticate and access the model service.
-            allowed_classes (List[str]): List of class names that should be retained in the final predictions.
-            json_formats (List[str]): List of output annotation formats to be generated (e.g., "COCO", "createML").
 
         Returns:
             str: Path to the directory where model predictions and converted annotation files were saved.

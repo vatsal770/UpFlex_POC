@@ -210,7 +210,7 @@ if st.session_state.processed_chunks and st.session_state.session_dir_chunks:
 
     image_name = Path(selected_image).stem
     # path to annotated images directory, and getting list of all chunk_sizes and overlap_sizes
-    chunk_root = Path(st.session_state.session_dir_chunks) / "Generated_chunks" / image_name
+    chunk_root = os.path.join(st.session_state.session_dir_chunks, "Generated_chunks", image_name)
 
     pct_sizes = list_subfolders(chunk_root)
     selected_pct = st.selectbox("Select Chunk Percentage", pct_sizes)
@@ -219,7 +219,7 @@ if st.session_state.processed_chunks and st.session_state.session_dir_chunks:
     overlaps = list_subfolders(overlap_root)
     selected_overlap = st.selectbox("Select Overlap", overlaps)
 
-    real_dir = os.path.join(overlap_root, selected_overlap)
+    real_dir = os.path.join(overlap_root, selected_overlap, "chunks", "images")
 
     st.markdown("---")
     st.markdown("## 🔍 Chunked Image Pairs")

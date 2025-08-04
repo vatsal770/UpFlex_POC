@@ -8,24 +8,31 @@ from pathlib import Path
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging once for all modules
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+    handlers=[logging.StreamHandler()]
+)
 logger = logging.getLogger(__name__)
 
 
-
-
 class ChunkStitcher:
-    def __init__(self, session_dir: str, json_formats: List[str]):
+    def __init__(self, session_dir: str, json_formats: List[str], stitching_type: str, stitching_params: Dict[str, Any]):
         self.session_dir = session_dir
         self.json_formats = json_formats
+        self.stitching_type = stitching_type
+        self.stitching_params = stitching_params
 
     def boxes_intersect_enough(
+        self,
         box1: List[int],
         box2: List[int],
         min_overlap: int = 15,
         comparison_thresh: int = 5,
         containment_thresh: int = 2
     ) -> bool:
+        
         """
         Determine whether two bounding boxes intersect sufficiently or if one is contained within the other.
 
@@ -81,7 +88,7 @@ class ChunkStitcher:
         return (x_overlap >= min_overlap or y_overlap >= min_overlap) or containment
 
 
-    def merge_boxes(boxes: List[List[int]]) -> List[int]:
+    def merge_boxes(self, boxes: List[List[int]]) -> List[int]:
         """
         Merge multiple bounding boxes into one box that tightly encloses all of them.
 
@@ -103,7 +110,7 @@ class ChunkStitcher:
         """
         Disjoint Set Union (Union-Find) data structure to efficiently group overlapping boxes.
         """
-        def __init__(self, n: int):
+        def __init__(self, n: int) -> None:
             # Initially, each element is its own parent
             self.parent = list(range(n))
 
@@ -120,8 +127,7 @@ class ChunkStitcher:
                 self.parent[pu] = pv
 
 
-
-    def get_color_for_class(class_id: int) -> Tuple[int, int, int]:
+    def get_color_for_class(self, class_id: int) -> Tuple[int, int, int]:
         """Assign fixed RGB colors per class_id."""
         color_map = {
             100: (0, 0, 255),    # Red (chair)
@@ -131,13 +137,14 @@ class ChunkStitcher:
         return color_map.get(class_id, (128, 128, 128))  # Gray fallback
 
 
-    def draw_predictions_single_image(self, coco: dict, image_path: str, updated_image_name: str, output_dir: str):
+    def draw_predictions_single_image(self, coco: dict, image_path: str, updated_image_name: str, output_dir: str) -> None:
         """
         Draw predictions from COCO-style annotations on a single image with image_id=1.
 
         Args:
             coco: COCO-format dictionary (images, annotations, categories)
             image_path: Path to the original image
+            updated_image_name: Name to save the annotated image as
             output_dir: Path to save the annotated image
         """
         os.makedirs(output_dir, exist_ok=True)
@@ -183,31 +190,22 @@ class ChunkStitcher:
                     self._stitch_custom(pred_dir, image_path, params)
 
     
-
-    def stitch(self, predictions_dir_list: List[str], image_path: str, stitch_type: str, params: Dict[str, Any]):
-        for pred_dir in predictions_dir_list:
-            if not os.path.isdir(pred_dir):
-                continue
-            if stitch_type == "custom":
-                self._stitch_custom(pred_dir, image_path, params)
+    def stitch(self, predictions_dir: str, image_path: str) -> None:
+        if self.stitching_type == "custom":
+            self._stitch_custom(predictions_dir, image_path)
 
     def _stitch_custom(
         self,
-        predictions_dir: List[str],
+        predictions_dir: str,
         image_path: str,
-        params: Dict[str, Any],
-    ):
+    ) -> None:
+        
         """
         Custom stitching logic using proximity-based union of bounding boxes.
 
         Parameters:
-            session_dir (str): Path to the session directory where stitched results will be saved.
             predictions_dir (List[str]): List of paths to per-chunk prediction JSON files.
             image_path (str): Path to the original full image (used for reconstructing global coordinates).
-            json_formats (List[str]): Output annotation formats to generate (e.g., "COCO", "createML").
-            merge_thresh (int): Minimum overlap in pixels required to consider boxes for merging.
-            comparison_thresh (int): Tolerance in pixel distance used to neglect false mergings.
-            containment_thresh (int): Tolerance for determining whether one box is contained within another.
 
         Functionality:
             - Aggregates all predictions from chunk-level JSON files.
@@ -223,9 +221,9 @@ class ChunkStitcher:
             103: "table-chair"
         }
 
-        merge_thresh = params.get("merge_thresh", 15)
-        comparison_thresh = params.get("comparison_thresh", 5)
-        containment_thresh = params.get("containment_thresh", 2)
+        merge_thresh = self.stitching_params.get("merge_thresh", 15)
+        comparison_thresh = self.stitching_params.get("comparison_thresh", 5)
+        containment_thresh = self.stitching_params.get("containment_thresh", 2)
 
         parts = os.path.normpath(predictions_dir).split(os.sep)
         chunk_pct, overlap = parts[-4], parts[-3]    # extract chunk_size and overlap size from predictions_dir
@@ -331,15 +329,6 @@ class ChunkStitcher:
             base_name = os.path.splitext(file)[0]
 
             annotations = chunk_data["annotations"]
-
-            # # extracting the start coordinates of the chunk image from the image_metadata
-            # match = re.search(r"_x(\d+)_y(\d+)\.jpg", filename)
-            # if not match:
-            #     logger.info("Match not Found while tracing back the Chunk image!!!!!!")
-            #     continue
-
-            # chunk_x = int(match.group(1))
-            # chunk_y = int(match.group(2))
 
             chunk_x, chunk_y = filename_to_xy[base_name]
 

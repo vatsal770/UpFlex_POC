@@ -7,47 +7,41 @@ import datetime
 from typing import Any, Dict, List
 from pathlib import Path
 
+from zip import ZipMaker
+
 # Configure logging once for all modules
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-console_handler = logging.StreamHandler()
-console_formatter = logging.Formatter(
-    "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+    handlers=[logging.StreamHandler()]
 )
-console_handler.setFormatter(console_formatter)
-
-# Prevent duplicate logs
-if not logger.hasHandlers():
-    logger.addHandler(console_handler)
-
-# Apply same handler to root to catch other modules' logs
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
-if not root_logger.hasHandlers():
-    root_logger.addHandler(console_handler)
+logger = logging.getLogger(__name__)
 
 
 
 class ChunkProcessor:
-    def __init__(self, session_dir: str, config: Dict[str, Any]):
+    def __init__(self, session_dir: str, chunking_type: str, chunk_params: Dict[str, Any], overlap_type: str, overlap_params: Dict[str, Any]) -> None:
         self.session_dir = session_dir
-        self.config = config
-
+        self.chunking_type = chunking_type
+        self.chunk_params = chunk_params
+        self.overlap_type = overlap_type
+        self.overlap_params = overlap_params
+        
 
     def chunk_fixed_ovp_pct(
+        self,
         overlap_type: str,
         output_dir: str,
         chunk_type:str,
         chunk_width: int,
         chunk_height: int,
+        base_name: str,
         start_overlap: int,
         end_overlap: int,
         img_w: int,
         img_h: int,
-        base_name: str,
         image: cv2.typing.MatLike,
-    ):
+    ) -> None:
         
         # looping till end overlap with a step size of 5%
         for overlap_pct in range(start_overlap, end_overlap + 1, 5):
@@ -106,6 +100,7 @@ class ChunkProcessor:
 
 
     def chunk_fixed_ovp_data_px(
+        self,
         overlap_type: str,
         output_dir: str,
         chunk_type: str,
@@ -116,7 +111,8 @@ class ChunkProcessor:
         base_name: str,
         overlap_px: int,
         image: cv2.typing.MatLike,
-    ):
+    ) -> None:
+        
         logger.info(
             f"Chunking with fixed size {chunk_width}x{chunk_height} and overlap {overlap_px}px"
         )
@@ -166,7 +162,9 @@ class ChunkProcessor:
             if chunk_end_y == img_h:
                 break    # if chunk_end_y is equal to img_h, then we break the loop
 
+
     def chunk_pct_ovp_data_px(
+        self,
         overlap_type: str,
         output_dir: str,
         chunk_type: str,
@@ -177,7 +175,8 @@ class ChunkProcessor:
         base_name: str,
         overlap_px: int,
         image: cv2.typing.MatLike,
-    ):
+    ) -> None:
+        
         # looping till end pct with a step size of 5%
         for chunk_pct in range(start_pct, end_pct + 1, 5):
             chunk_width = max(1, (img_w * chunk_pct) // 100)     # calculate chunk width
@@ -232,6 +231,7 @@ class ChunkProcessor:
 
 
     def chunk_pct_ovp_pct(
+        self,
         overlap_type: str,
         output_dir: str,
         chunk_type: str,
@@ -243,7 +243,8 @@ class ChunkProcessor:
         end_overlap: int,
         base_name: str,
         image: cv2.typing.MatLike,
-    ):
+    ) -> None:
+        
         # looping till end pct with a step size of 5%
         for chunk_pct in range(start_pct, end_pct + 1, 5):
             chunk_width = max(1, (img_w * chunk_pct) // 100)    # calculate chunk width
@@ -300,43 +301,20 @@ class ChunkProcessor:
                         break    # if chunk_end_y is equal to img_h, then we break the loop
 
 
-    def generate_chunks_1(self) -> str:
+    def generate_chunks_1(self) -> None:
 
         """
         Full implementaion for chunking, model predictions, stitching, and packaging results.
 
-        Parameters:
-            session_dir (str): Path to the user session directory for input/output operations.
-            config_data (Dict[str, Any]): Configuration dictionary containing all required parameters for processing.
-
         Returns:
-            str: Backend-accessible path to the session directory (prepended with "./backend").
+            None
 
         Functionality:
             - Generates chunked images based on the given configuration.
-            - Runs model predictions on each chunk and saves the raw prediction files.
-            - Applies stitching logic to merge per-chunk predictions into full-image annotations.
-            - Converts the merged results into selected JSON formats (COCO, createML, etc.).
-            - Creates a zipped bundle for each JSON format and stores it in the session directory.
-            - Returns a session directory path with `./backend` prepended, to be used by frontend logic.
         """
 
         # defining user_images directory
         image_dir = os.path.join(self.session_dir, "user_images")
-
-        # extracting selected_classes from the config file
-        selected_classes = self.config_data["allowed_classes"]["params"]["selected"]
-
-        logger.info(f"Selected Classes are: {selected_classes}")    # logging selected classes
-
-
-        # Extract chunking configurations
-        chunking_type: str = self.config_data.get("chunking", {}).get("type", "")
-        chunk_params = self.config_data.get("chunking", {}).get("params", "")
-
-        # Overlap configurations
-        overlap_type: str = self.config_data.get("overlap", {}).get("type", "")
-        overlap_params = self.config_data.get("overlap", {}).get("params", {})
 
         # performing chunking and stiching per image in user_images directory
         for image_file in os.listdir(image_dir):
@@ -354,19 +332,23 @@ class ChunkProcessor:
 
             output_dir = os.path.join(self.session_dir, "COCO", image_name, "Dataset")  # set COCO as a general directory for all json formats
 
+            logger.info(f"chunk directory: {output_dir}")    # check the created chunk_base_dir path
+
             # checking for each possible combinations of chunking
-            if chunking_type == "percentage":
-                start_pct = chunk_params.get("start_pct", 0)
-                end_pct = chunk_params.get("end_pct", 0)
+            if self.chunking_type == "percentage":
+                start_pct = self.chunk_params.get("start_pct", 0)
+                end_pct = self.chunk_params.get("end_pct", 0)
+
+                logger.info(f"Chunking with percentage {start_pct}% to {end_pct}% and overlap type {self.overlap_type}")
 
                 # chunking: percentage, overlap:percentage
-                if overlap_type == "percentage":
-                    start_overlap = overlap_params.get("start_pct", 0)
-                    end_overlap = overlap_params.get("end_pct", 0)
+                if self.overlap_type == "percentage":
+                    start_overlap = self.overlap_params.get("start_pct", 0)
+                    end_overlap = self.overlap_params.get("end_pct", 0)
                     self.chunk_pct_ovp_pct(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         start_pct,
                         end_pct,
                         img_w,
@@ -378,16 +360,14 @@ class ChunkProcessor:
                     )
 
                 # chunking: percentage, overlap:dataset_pct
-                elif overlap_type == "dataset_pct":
+                elif self.overlap_type == "dataset_pct":
                     overlap_pct = (
-                        self.config_data.get("overlap", {})
-                        .get("params", "")
-                        .get("overlap_pct", "")
+                        self.overlap_params.get("overlap_pct", "")
                     )
                     self.chunk_pct_ovp_pct(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         start_pct,
                         end_pct,
                         img_w,
@@ -400,11 +380,11 @@ class ChunkProcessor:
 
                 # chunking: percentage, overlap:dataset_px
                 else:
-                    overlap_px = overlap_params.get("overlap_px", 0)
+                    overlap_px = self.overlap_params.get("overlap_px", 0)
                     self.chunk_pct_ovp_data_px(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         start_pct,
                         end_pct,
                         img_w,
@@ -414,56 +394,54 @@ class ChunkProcessor:
                         image,
                     )
 
-            elif chunking_type == "fixed":
-                chunk_width = chunk_params.get("width", 640)
-                chunk_height = chunk_params.get("height", 640)
-                
+            elif self.chunking_type == "fixed":
+                chunk_width = self.chunk_params.get("width", 640)
+                chunk_height = self.chunk_params.get("height", 640)
+
                 # chunking: fixed, overlap:percentage
-                if overlap_type == "percentage":
-                    start_overlap = overlap_params.get("start_pct", 0)
-                    end_overlap = overlap_params.get("end_pct", 0)
+                if self.overlap_type == "percentage":
+                    start_overlap = self.overlap_params.get("start_pct", 0)
+                    end_overlap = self.overlap_params.get("end_pct", 0)
                     self.chunk_fixed_ovp_pct(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         chunk_width,
                         chunk_height,
+                        base_name,
                         start_overlap,
                         end_overlap,
-                        base_name,
                         img_w,
                         img_h,
                         image,
                     )
 
                 # chunking: fixed, overlap:dataset_pct
-                elif overlap_type == "dataset_pct":
+                elif self.overlap_type == "dataset_pct":
                     overlap_pct = (
-                        self.config_data.get("overlap", {})
-                        .get("params", "")
-                        .get("overlap_pct", "")
+                        self.overlap_params.get("overlap_pct", "")
                     )
                     self.chunk_fixed_ovp_pct(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         chunk_width,
                         chunk_height,
+                        base_name,
                         overlap_pct,
                         overlap_pct + 1,
                         img_w,
                         img_h,
-                        base_name,
                         image,
                     )
 
                 # chunking: fixed, overlap:dataset_px
                 else:
-                    overlap_px = overlap_params.get("overlap_px", 0)
+                    overlap_px = self.overlap_params.get("overlap_px", 0)
                     self.chunk_fixed_ovp_data_px(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         chunk_width,
                         chunk_height,
                         img_w,
@@ -473,77 +451,16 @@ class ChunkProcessor:
                         image,
                     )
 
-
-        #     dataset_root = os.path.join(session_dir, "COCO", image_name, "Dataset")   # set COCO as a general directory for all json formats
-        #     # Run model predictions for all chunk
-        #     if chunking_type in ["percentage", "fixed"] and overlap_type in ["percentage", "dataset_pct", "dataset_px"]:
-        #         pred_dir_list = []  # to store directories with json prediction files
-        #         for dir in os.listdir(dataset_root):
-        #             dir_path = os.path.join(dataset_root, dir)
-        #             if not os.path.isdir(dir_path):
-        #                 continue
-
-        #             logger.info("Traversing the directory: %s", dir_path)
-        #             for overlap_dir in os.listdir(dir_path):
-        #                 overlap_dir_path = os.path.join(dir_path, overlap_dir)
-        #                 if not os.path.isdir(overlap_dir_path):
-        #                     continue
-        #                 logger.info("Processing overlap directory: %s", overlap_dir_path)
-
-        #                 chunked_img_dir = os.path.join(overlap_dir_path, "chunks", "images")    # directory containing chunked images and metadata
-
-        #                 # Run model predictions on each chunk directory
-        #                 resulting_json_directory = run_model_predictions_on_chunks(session_dir, overlap_dir_path, chunked_img_dir, full_image_name=image_name, model_id=model_id, api_key=api_key, allowed_classes=selected_classes, json_formats=json_formats)
-        #                 pred_dir_list.append(resulting_json_directory)
-
-
-        #     # Perform stitching based on the stitching type
-        #     if stitching_type == "custom":
-        #         logger.info(f"Starting Custom stitching on {len(pred_dir_list)} directories.")
-
-        #         # Extract stitching parameters
-        #         min_distance_thresh = stitching_params.get("intersection_thresh", 0.5)
-        #         comparison_thresh = stitching_params.get("comparison_thresh", 0.5)
-        #         containment_thresh = stitching_params.get("containment_thresh", 0.5)
-
-        #         for pred_dir in pred_dir_list:
-        #             if not os.path.isdir(pred_dir):
-        #                 continue
-
-        #             logger.info("Stiching chunks in directory: %s", {pred_dir})
-        #             stitch_chunks_custom(
-        #                 session_dir,
-        #                 predictions_dir=pred_dir,
-        #                 image_path=image_path,
-        #                 json_formats=json_formats,
-        #                 merge_thresh=min_distance_thresh,
-        #                 comparison_thresh=comparison_thresh,
-        #                 containment_thresh=containment_thresh,
-        #             )
-
-        # # create zipped file per json format type
-        # for json_format in json_formats:
-        #     folder_path = os.path.join(session_dir, json_format)     # input_folder
-        #     zip_output_path = folder_path + ".zip"    # output_zip_path
-        #     zip_folder(folder_path, zip_output_path)
-        #     logger.info(f"✅ Folder '{folder_path}' zipped successfully at: {zip_output_path}")
-
-        stripped_session_dir = self.session_dir.strip(".")
-        backend_session_dir = "./backend" + stripped_session_dir    # adding "./backend" in the session_dir_path
-        return backend_session_dir
+        logger.info(f"chunks generated successfully!!!!!!!!!!!!!!!!!")
     
 
-    def generate_chunks(self) -> str:
+    def generate_chunks(self) -> None:
 
         """
-        Generates chunked images from the uploaded full images, based on the configuration provided.
-
-        Parameters:
-            session_dir (str): Path to the user session directory where chunks will be saved.
-            config_data (Dict[str, Any]): Configuration dictionary containing chunk size, overlap strategy, etc.
+        Generates chunked images from the uploaded full images, based on the configuration provided..
 
         Returns:
-            str: Backend-accessible path to the session directory (prepended with "./backend").
+            None
 
         Functionality:
             - Parses the configuration to determine how to chunk the images (e.g., percentage/fixed size).
@@ -553,14 +470,6 @@ class ChunkProcessor:
         """
 
         image_dir = os.path.join(self.session_dir, "user_images")     # acessing user_images directory
-
-        # Extract chunking configurations
-        chunking_type: str = self.config_data.get("chunking", {}).get("type", "")
-        chunk_params = self.config_data.get("chunking", {}).get("params", "")
-
-        # Overlap configurations
-        overlap_type: str = self.config_data.get("overlap", {}).get("type", "")
-        overlap_params = self.config_data.get("overlap", {}).get("params", {})
 
         # performing chunking and stiching per image in user_images directory
         for image_file in os.listdir(image_dir):
@@ -580,18 +489,18 @@ class ChunkProcessor:
             logger.info(f"chunk directory: {output_dir}")    # check the created chunk_base_dir path
 
             # checking for each possible combinations of chunking
-            if chunking_type == "percentage":
-                start_pct = chunk_params.get("start_pct", 0)
-                end_pct = chunk_params.get("end_pct", 0)
+            if self.chunking_type == "percentage":
+                start_pct = self.chunk_params.get("start_pct", 0)
+                end_pct = self.chunk_params.get("end_pct", 0)
 
                 # chunking: percentage, overlap:percentage
-                if overlap_type == "percentage":
-                    start_overlap = overlap_params.get("start_pct", 0)
-                    end_overlap = overlap_params.get("end_pct", 0)
+                if self.overlap_type == "percentage":
+                    start_overlap = self.overlap_params.get("start_pct", 0)
+                    end_overlap = self.overlap_params.get("end_pct", 0)
                     self.chunk_pct_ovp_pct(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type, 
+                        self.chunking_type,
                         start_pct,
                         end_pct,
                         img_w,
@@ -603,16 +512,14 @@ class ChunkProcessor:
                     )
 
                 # chunking: percentage, overlap:dataset_pct
-                elif overlap_type == "dataset_pct":
+                elif self.overlap_type == "dataset_pct":
                     overlap_pct = (
-                        self.config_data.get("overlap", {})
-                        .get("params", "")
-                        .get("overlap_pct", "")
+                        self.overlap_params.get("overlap_pct", "")
                     )
                     self.chunk_pct_ovp_pct(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         start_pct,
                         end_pct,
                         img_w,
@@ -625,11 +532,11 @@ class ChunkProcessor:
 
                 # chunking: percentage, overlap:dataset_px
                 else:
-                    overlap_px = overlap_params.get("overlap_px", 0)
+                    overlap_px = self.overlap_params.get("overlap_px", 0)
                     self.chunk_pct_ovp_data_px(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         start_pct,
                         end_pct,
                         img_w,
@@ -639,18 +546,18 @@ class ChunkProcessor:
                         image,
                     )
 
-            elif chunking_type == "fixed":
-                chunk_width = chunk_params.get("width", 640)
-                chunk_height = chunk_params.get("height", 640)
+            elif self.chunking_type == "fixed":
+                chunk_width = self.chunk_params.get("width", 640)
+                chunk_height = self.chunk_params.get("height", 640)
 
                 # chunking: fixed, overlap:percentage
-                if overlap_type == "percentage":
-                    start_overlap = overlap_params.get("start_pct", 0)
-                    end_overlap = overlap_params.get("end_pct", 0)
+                if self.overlap_type == "percentage":
+                    start_overlap = self.overlap_params.get("start_pct", 0)
+                    end_overlap = self.overlap_params.get("end_pct", 0)
                     self.chunk_fixed_ovp_pct(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         chunk_width,
                         chunk_height,
                         base_name,
@@ -662,16 +569,14 @@ class ChunkProcessor:
                     )
 
                 # chunking: fixed, overlap:dataset_pct
-                elif overlap_type == "dataset_pct":
+                elif self.overlap_type == "dataset_pct":
                     overlap_pct = (
-                        self.config_data.get("overlap", {})
-                        .get("params", "")
-                        .get("overlap_pct", "")
+                        self.overlap_params.get("overlap_pct", "")
                     )
                     self.chunk_fixed_ovp_pct(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         chunk_width,
                         chunk_height,
                         base_name,
@@ -684,11 +589,11 @@ class ChunkProcessor:
 
                 # chunking: fixed, overlap:dataset_px
                 else:
-                    overlap_px = overlap_params.get("overlap_px", 0)
+                    overlap_px = self.overlap_params.get("overlap_px", 0)
                     self.chunk_fixed_ovp_data_px(
-                        overlap_type,
+                        self.overlap_type,
                         output_dir,
-                        chunking_type,
+                        self.chunking_type,
                         chunk_width,
                         chunk_height,
                         img_w,
@@ -700,11 +605,15 @@ class ChunkProcessor:
 
         logger.info(f"chunks generated successfully!!!!!!!!!!!!!!!!!")
 
-        # create zipped folder for chunked images and metadata
-        folder_path = Path(session_dir) / "Generated_chunks"    # input_folder
-        zip_output_path = Path(session_dir) / "Generated_chunks.zip"     # output_zip_path
-        zip_folder(folder_path, zip_output_path)
-        logger.info(f"✅ Folder '{folder_path}' zipped successfully at: {zip_output_path}")
+
+        # defining input_folder_name and zip_output_name
+        input_folder_name = "Generated_chunks"    # input_folder
+        zip_output_name = "Generated_chunks.zip"     # output_zip_path
+
+        # create an instance of "ZipMaker" class
+        zip_maker = ZipMaker(self.session_dir)
+        zip_maker.zip_folder(input_folder_name, zip_output_name)
+        logger.info(f"✅ Folder '{input_folder_name}' zipped successfully")
 
         stripped_session_dir = self.session_dir.strip(".")
         backend_session_dir = "./backend" + stripped_session_dir   # adding "./backend" in the session_dir_path
